@@ -1,0 +1,698 @@
+name: Build VideoCompressor APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate project files
+        run: |
+          mkdir -p app
+          cat > app/build.gradle <<'EOF_VC'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.omar.videocompressor'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId 'com.omar.videocompressor'
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+
+              lint {
+                  abortOnError false
+                  checkReleaseBuilds false
+              }
+          }
+
+          dependencies {
+              def media3 = '1.4.1'
+              implementation "androidx.media3:media3-transformer:$media3"
+              implementation "androidx.media3:media3-effect:$media3"
+              implementation "androidx.media3:media3-common:$media3"
+              implementation 'androidx.core:core:1.13.1'
+          }
+          EOF_VC
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission
+                  android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="28" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                      <!-- استقبال فيديو عبر زر "مشاركة" من المعرض -->
+                      <intent-filter>
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="video/*" />
+                      </intent-filter>
+                  </activity>
+
+                  <provider
+                      android:name="androidx.core.content.FileProvider"
+                      android:authorities="${applicationId}.fileprovider"
+                      android:exported="false"
+                      android:grantUriPermissions="true">
+                      <meta-data
+                          android:name="android.support.FILE_PROVIDER_PATHS"
+                          android:resource="@xml/file_paths" />
+                  </provider>
+              </application>
+          </manifest>
+          EOF_VC
+          mkdir -p app/src/main/java/com/omar/videocompressor
+          cat > app/src/main/java/com/omar/videocompressor/MainActivity.java <<'EOF_VC'
+          package com.omar.videocompressor;
+
+          import android.app.Activity;
+          import android.content.ContentResolver;
+          import android.content.ContentValues;
+          import android.content.Intent;
+          import android.database.Cursor;
+          import android.media.MediaMetadataRetriever;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.os.Environment;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.provider.MediaStore;
+          import android.provider.OpenableColumns;
+          import android.view.View;
+          import android.widget.Button;
+          import android.widget.ProgressBar;
+          import android.widget.RadioGroup;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          import androidx.annotation.OptIn;
+          import androidx.core.content.FileProvider;
+          import androidx.media3.common.MediaItem;
+          import androidx.media3.common.MimeTypes;
+          import androidx.media3.common.util.UnstableApi;
+          import androidx.media3.effect.Presentation;
+          import androidx.media3.transformer.Composition;
+          import androidx.media3.transformer.DefaultEncoderFactory;
+          import androidx.media3.transformer.EditedMediaItem;
+          import androidx.media3.transformer.Effects;
+          import androidx.media3.transformer.ExportException;
+          import androidx.media3.transformer.ExportResult;
+          import androidx.media3.transformer.ProgressHolder;
+          import androidx.media3.transformer.Transformer;
+          import androidx.media3.transformer.VideoEncoderSettings;
+
+          import java.io.File;
+          import java.io.FileInputStream;
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          import java.text.SimpleDateFormat;
+          import java.util.ArrayList;
+          import java.util.Collections;
+          import java.util.Date;
+          import java.util.Locale;
+
+          @OptIn(markerClass = UnstableApi.class)
+          public class MainActivity extends Activity {
+
+              private static final int REQ_PICK = 1001;
+
+              private Button btnPick, btnCompress, btnShare;
+              private TextView txtInfo, txtStatus;
+              private ProgressBar progressBar;
+              private RadioGroup radioQuality;
+
+              private Uri inputUri;
+              private long inputSize = -1;
+              private File outputFile;
+              private Transformer transformer;
+              private final Handler handler = new Handler(Looper.getMainLooper());
+              private final ProgressHolder progressHolder = new ProgressHolder();
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  setContentView(R.layout.activity_main);
+
+                  btnPick = findViewById(R.id.btnPick);
+                  btnCompress = findViewById(R.id.btnCompress);
+                  btnShare = findViewById(R.id.btnShare);
+                  txtInfo = findViewById(R.id.txtInfo);
+                  txtStatus = findViewById(R.id.txtStatus);
+                  progressBar = findViewById(R.id.progress);
+                  radioQuality = findViewById(R.id.radioQuality);
+
+                  btnPick.setOnClickListener(v -> pickVideo());
+                  btnCompress.setOnClickListener(v -> startCompression());
+                  btnShare.setOnClickListener(v -> shareOutput());
+
+                  handleSharedIntent(getIntent());
+              }
+
+              @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  handleSharedIntent(intent);
+              }
+
+              /** فيديو وصل عبر زر "مشاركة" من تطبيق آخر */
+              private void handleSharedIntent(Intent intent) {
+                  if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())) {
+                      Uri uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                      if (uri != null) onVideoSelected(uri);
+                  }
+              }
+
+              private void pickVideo() {
+                  Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                  intent.setType("video/*");
+                  intent.addCategory(Intent.CATEGORY_OPENABLE);
+                  startActivityForResult(Intent.createChooser(intent, "اختر فيديو"), REQ_PICK);
+              }
+
+              @Override
+              protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+                  super.onActivityResult(requestCode, resultCode, data);
+                  if (requestCode == REQ_PICK && resultCode == RESULT_OK && data != null && data.getData() != null) {
+                      onVideoSelected(data.getData());
+                  }
+              }
+
+              private void onVideoSelected(Uri uri) {
+                  inputUri = uri;
+                  inputSize = querySize(uri);
+                  int[] dims = readDimensions(uri);
+                  String name = queryName(uri);
+
+                  StringBuilder sb = new StringBuilder();
+                  sb.append("📹 ").append(name != null ? name : "فيديو").append("\n");
+                  sb.append("الحجم: ").append(inputSize > 0 ? formatSize(inputSize) : "غير معروف");
+                  if (dims[0] > 0) sb.append("\nالأبعاد: ").append(dims[0]).append("×").append(dims[1]);
+                  if (dims[2] > 0) sb.append("\nالمدة: ").append(formatDuration(dims[2]));
+                  txtInfo.setText(sb.toString());
+
+                  btnCompress.setEnabled(true);
+                  btnShare.setVisibility(View.GONE);
+                  txtStatus.setText("");
+                  progressBar.setVisibility(View.GONE);
+              }
+
+              private void startCompression() {
+                  if (inputUri == null) return;
+
+                  int shortSide;
+                  int bitrate;
+                  int checked = radioQuality.getCheckedRadioButtonId();
+                  if (checked == R.id.rbHigh) {
+                      shortSide = 720;
+                      bitrate = 2_500_000;
+                  } else if (checked == R.id.rbLow) {
+                      shortSide = 360;
+                      bitrate = 600_000;
+                  } else {
+                      shortSide = 480;
+                      bitrate = 1_200_000;
+                  }
+
+                  File dir = new File(getCacheDir(), "compressed");
+                  if (!dir.exists()) dir.mkdirs();
+                  File[] old = dir.listFiles();
+                  if (old != null) for (File f : old) f.delete();
+                  String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+                  outputFile = new File(dir, "compressed_" + stamp + ".mp4");
+
+                  // حساب الارتفاع الناتج بحيث يصبح الضلع الأقصر = shortSide (بدون تكبير)
+                  int[] dims = readDimensions(inputUri);
+                  ArrayList<androidx.media3.common.Effect> videoEffects = new ArrayList<>();
+                  int w = dims[0], h = dims[1];
+                  if (w > 0 && h > 0) {
+                      int currentShort = Math.min(w, h);
+                      if (currentShort > shortSide) {
+                          int targetHeight;
+                          if (h <= w) {
+                              targetHeight = shortSide;               // فيديو أفقي
+                          } else {
+                              targetHeight = (int) Math.round((double) h * shortSide / w); // فيديو عمودي
+                          }
+                          targetHeight = targetHeight - (targetHeight % 2);
+                          videoEffects.add(Presentation.createForHeight(targetHeight));
+                      }
+                  } else {
+                      videoEffects.add(Presentation.createForHeight(shortSide));
+                  }
+
+                  EditedMediaItem editedItem = new EditedMediaItem.Builder(MediaItem.fromUri(inputUri))
+                          .setEffects(new Effects(Collections.emptyList(), videoEffects))
+                          .build();
+
+                  DefaultEncoderFactory encoderFactory = new DefaultEncoderFactory.Builder(this)
+                          .setRequestedVideoEncoderSettings(
+                                  new VideoEncoderSettings.Builder().setBitrate(bitrate).build())
+                          .setEnableFallback(true)
+                          .build();
+
+                  transformer = new Transformer.Builder(this)
+                          .setVideoMimeType(MimeTypes.VIDEO_H264)
+                          .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                          .setEncoderFactory(encoderFactory)
+                          .addListener(new Transformer.Listener() {
+                              @Override
+                              public void onCompleted(Composition composition, ExportResult exportResult) {
+                                  onCompressionDone();
+                              }
+
+                              @Override
+                              public void onError(Composition composition, ExportResult exportResult,
+                                                  ExportException exportException) {
+                                  onCompressionFailed(exportException);
+                              }
+                          })
+                          .build();
+
+                  setBusy(true);
+                  txtStatus.setText("جارٍ الضغط... 0%");
+                  transformer.start(editedItem, outputFile.getAbsolutePath());
+                  handler.post(progressUpdater);
+              }
+
+              private final Runnable progressUpdater = new Runnable() {
+                  @Override
+                  public void run() {
+                      if (transformer == null) return;
+                      int state = transformer.getProgress(progressHolder);
+                      if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
+                          progressBar.setIndeterminate(false);
+                          progressBar.setProgress(progressHolder.progress);
+                          txtStatus.setText("جارٍ الضغط... " + progressHolder.progress + "%");
+                      } else if (state == Transformer.PROGRESS_STATE_WAITING_FOR_AVAILABILITY) {
+                          progressBar.setIndeterminate(true);
+                      }
+                      if (state != Transformer.PROGRESS_STATE_NOT_STARTED) {
+                          handler.postDelayed(this, 400);
+                      }
+                  }
+              };
+
+              private void onCompressionDone() {
+                  handler.removeCallbacks(progressUpdater);
+                  transformer = null;
+                  setBusy(false);
+                  progressBar.setProgress(100);
+
+                  long outSize = outputFile.length();
+                  String msg = "✅ تم الضغط!\nالحجم الجديد: " + formatSize(outSize);
+                  if (inputSize > 0) {
+                      long saved = 100 - (outSize * 100 / inputSize);
+                      msg += "\n(أصغر بنسبة " + Math.max(saved, 0) + "%)";
+                  }
+                  boolean savedToGallery = saveToGallery(outputFile);
+                  if (savedToGallery) msg += "\nحُفظ في المعرض: Movies/VideoCompressor";
+                  txtStatus.setText(msg);
+                  btnShare.setVisibility(View.VISIBLE);
+              }
+
+              private void onCompressionFailed(Exception e) {
+                  handler.removeCallbacks(progressUpdater);
+                  transformer = null;
+                  setBusy(false);
+                  progressBar.setVisibility(View.GONE);
+                  txtStatus.setText("❌ فشل الضغط: " + e.getMessage()
+                          + "\nجرّب مستوى ضغط آخر أو فيديو آخر.");
+              }
+
+              private void setBusy(boolean busy) {
+                  btnPick.setEnabled(!busy);
+                  btnCompress.setEnabled(!busy);
+                  for (int i = 0; i < radioQuality.getChildCount(); i++) {
+                      radioQuality.getChildAt(i).setEnabled(!busy);
+                  }
+                  if (busy) {
+                      progressBar.setVisibility(View.VISIBLE);
+                      progressBar.setProgress(0);
+                      btnShare.setVisibility(View.GONE);
+                  }
+              }
+
+              private void shareOutput() {
+                  if (outputFile == null || !outputFile.exists()) return;
+                  Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", outputFile);
+                  Intent share = new Intent(Intent.ACTION_SEND);
+                  share.setType("video/mp4");
+                  share.putExtra(Intent.EXTRA_STREAM, uri);
+                  share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                  startActivity(Intent.createChooser(share, "إرسال الفيديو عبر"));
+              }
+
+              /** حفظ نسخة في المعرض (أندرويد 10 فما فوق) */
+              private boolean saveToGallery(File file) {
+                  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false;
+                  try {
+                      ContentResolver resolver = getContentResolver();
+                      ContentValues values = new ContentValues();
+                      values.put(MediaStore.Video.Media.DISPLAY_NAME, file.getName());
+                      values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+                      values.put(MediaStore.Video.Media.RELATIVE_PATH,
+                              Environment.DIRECTORY_MOVIES + "/VideoCompressor");
+                      Uri dest = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+                      if (dest == null) return false;
+                      try (InputStream in = new FileInputStream(file);
+                           OutputStream out = resolver.openOutputStream(dest)) {
+                          if (out == null) return false;
+                          byte[] buf = new byte[64 * 1024];
+                          int n;
+                          while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                      }
+                      return true;
+                  } catch (Exception e) {
+                      Toast.makeText(this, "تعذّر الحفظ في المعرض، لكن يمكنك المشاركة", Toast.LENGTH_LONG).show();
+                      return false;
+                  }
+              }
+
+              /** يُرجع {العرض، الارتفاع، المدة بالملّي ثانية} مع مراعاة دوران الفيديو */
+              private int[] readDimensions(Uri uri) {
+                  int[] r = {0, 0, 0};
+                  MediaMetadataRetriever mmr = new MediaMetadataRetriever();
+                  try {
+                      mmr.setDataSource(this, uri);
+                      String ws = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+                      String hs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+                      String rs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+                      String ds = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+                      int w = ws != null ? Integer.parseInt(ws) : 0;
+                      int h = hs != null ? Integer.parseInt(hs) : 0;
+                      int rot = rs != null ? Integer.parseInt(rs) : 0;
+                      if (rot == 90 || rot == 270) {
+                          int t = w; w = h; h = t;
+                      }
+                      r[0] = w;
+                      r[1] = h;
+                      r[2] = ds != null ? (int) Long.parseLong(ds) : 0;
+                  } catch (Exception ignored) {
+                  } finally {
+                      try { mmr.release(); } catch (Exception ignored) { }
+                  }
+                  return r;
+              }
+
+              private long querySize(Uri uri) {
+                  try (Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+                      if (c != null && c.moveToFirst()) {
+                          int idx = c.getColumnIndex(OpenableColumns.SIZE);
+                          if (idx >= 0 && !c.isNull(idx)) return c.getLong(idx);
+                      }
+                  } catch (Exception ignored) { }
+                  return -1;
+              }
+
+              private String queryName(Uri uri) {
+                  try (Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+                      if (c != null && c.moveToFirst()) {
+                          int idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                          if (idx >= 0) return c.getString(idx);
+                      }
+                  } catch (Exception ignored) { }
+                  return null;
+              }
+
+              private static String formatSize(long bytes) {
+                  if (bytes < 1024) return bytes + " B";
+                  double kb = bytes / 1024.0;
+                  if (kb < 1024) return String.format(Locale.US, "%.0f KB", kb);
+                  double mb = kb / 1024.0;
+                  if (mb < 1024) return String.format(Locale.US, "%.1f MB", mb);
+                  return String.format(Locale.US, "%.2f GB", mb / 1024.0);
+              }
+
+              private static String formatDuration(int ms) {
+                  int s = ms / 1000;
+                  return String.format(Locale.US, "%d:%02d", s / 60, s % 60);
+              }
+
+              @Override
+              protected void onDestroy() {
+                  handler.removeCallbacks(progressUpdater);
+                  if (transformer != null) transformer.cancel();
+                  super.onDestroy();
+              }
+          }
+          EOF_VC
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#0F766E" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M30,36h36a4,4 0 0 1 4,4v28a4,4 0 0 1 -4,4h-36a4,4 0 0 1 -4,-4v-28a4,4 0 0 1 4,-4z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M72,46l12,-8v32l-12,-8z" />
+              <path android:fillColor="#0F766E" android:pathData="M45,42h6v12h6l-9,10l-9,-10h6z" />
+          </vector>
+          EOF_VC
+          mkdir -p app/src/main/res/layout
+          cat > app/src/main/res/layout/activity_main.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="#F5F7F7"
+              android:layoutDirection="rtl">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="vertical"
+                  android:padding="20dp">
+
+                  <TextView
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="ضاغط الفيديو"
+                      android:textColor="#0F766E"
+                      android:textSize="28sp"
+                      android:textStyle="bold"
+                      android:gravity="center"
+                      android:layout_marginTop="12dp" />
+
+                  <TextView
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="صغّر حجم الفيديو لإرساله بسهولة"
+                      android:textColor="#555555"
+                      android:textSize="15sp"
+                      android:gravity="center"
+                      android:layout_marginBottom="20dp" />
+
+                  <Button
+                      android:id="@+id/btnPick"
+                      android:layout_width="match_parent"
+                      android:layout_height="56dp"
+                      android:text="📂 اختيار فيديو"
+                      android:textSize="17sp"
+                      android:backgroundTint="#0F766E"
+                      android:textColor="#FFFFFF" />
+
+                  <TextView
+                      android:id="@+id/txtInfo"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="لم يتم اختيار أي فيديو"
+                      android:textColor="#333333"
+                      android:textSize="15sp"
+                      android:padding="12dp"
+                      android:layout_marginTop="12dp"
+                      android:background="#FFFFFF" />
+
+                  <TextView
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="مستوى الضغط"
+                      android:textColor="#222222"
+                      android:textSize="17sp"
+                      android:textStyle="bold"
+                      android:layout_marginTop="20dp" />
+
+                  <RadioGroup
+                      android:id="@+id/radioQuality"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:background="#FFFFFF"
+                      android:padding="8dp"
+                      android:layout_marginTop="6dp">
+
+                      <RadioButton
+                          android:id="@+id/rbHigh"
+                          android:layout_width="match_parent"
+                          android:layout_height="wrap_content"
+                          android:text="جودة عالية — 720p (ضغط خفيف)"
+                          android:textSize="15sp" />
+
+                      <RadioButton
+                          android:id="@+id/rbMedium"
+                          android:layout_width="match_parent"
+                          android:layout_height="wrap_content"
+                          android:checked="true"
+                          android:text="متوسطة — 480p (مُوصى به للإرسال)"
+                          android:textSize="15sp" />
+
+                      <RadioButton
+                          android:id="@+id/rbLow"
+                          android:layout_width="match_parent"
+                          android:layout_height="wrap_content"
+                          android:text="حجم صغير جداً — 360p (ضغط قوي)"
+                          android:textSize="15sp" />
+                  </RadioGroup>
+
+                  <Button
+                      android:id="@+id/btnCompress"
+                      android:layout_width="match_parent"
+                      android:layout_height="56dp"
+                      android:layout_marginTop="20dp"
+                      android:enabled="false"
+                      android:text="⚡ ابدأ الضغط"
+                      android:textSize="17sp"
+                      android:backgroundTint="#F59E0B"
+                      android:textColor="#FFFFFF" />
+
+                  <ProgressBar
+                      android:id="@+id/progress"
+                      style="@android:style/Widget.Material.ProgressBar.Horizontal"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="16dp"
+                      android:max="100"
+                      android:progress="0"
+                      android:visibility="gone" />
+
+                  <TextView
+                      android:id="@+id/txtStatus"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:textColor="#0F766E"
+                      android:textSize="16sp"
+                      android:gravity="center"
+                      android:layout_marginTop="10dp" />
+
+                  <Button
+                      android:id="@+id/btnShare"
+                      android:layout_width="match_parent"
+                      android:layout_height="56dp"
+                      android:layout_marginTop="16dp"
+                      android:visibility="gone"
+                      android:text="📤 مشاركة / إرسال الفيديو"
+                      android:textSize="17sp"
+                      android:backgroundTint="#2563EB"
+                      android:textColor="#FFFFFF" />
+              </LinearLayout>
+          </ScrollView>
+          EOF_VC
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/strings.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">ضاغط الفيديو</string>
+          </resources>
+          EOF_VC
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/file_paths.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths>
+              <cache-path name="compressed" path="compressed/" />
+          </paths>
+          EOF_VC
+          cat > build.gradle <<'EOF_VC'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EOF_VC
+          cat > gradle.properties <<'EOF_VC'
+          org.gradle.jvmargs=-Xmx2048m
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF_VC
+          cat > settings.gradle <<'EOF_VC'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "VideoCompressor"
+          include ':app'
+          EOF_VC
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build APK
+        run: |
+          gradle assembleDebug --no-daemon
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk out/VideoCompressor.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VideoCompressor-APK
+          path: out/VideoCompressor.apk
+
+      - name: Publish release (direct APK download)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: VideoCompressor build ${{ github.run_number }}
+          files: out/VideoCompressor.apk
