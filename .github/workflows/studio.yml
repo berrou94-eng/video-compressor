@@ -1068,7 +1068,7 @@ jobs:
               private lateinit var overlay: TextView
               private lateinit var nameView: TextView
               private lateinit var options: LinearLayout
-              private lateinit var actionBtn: TextView
+              private lateinit var actionBtn: LinearLayout
               private lateinit var progress: ProgressBar
               private lateinit var status: TextView
               private lateinit var result: LinearLayout
@@ -1467,7 +1467,7 @@ jobs:
                   presetCards.clear()
                   presetIcons.clear()
                   actionBtn.visibility = View.VISIBLE
-                  actionBtn.text = actionText()
+                  (actionBtn.getChildAt(1) as TextView).text = actionText()
                   when (tool) {
                       Tool.COMPRESS -> {
                           section(tr("اختر حجم الملف", "Choose output size"))
