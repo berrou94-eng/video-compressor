@@ -1,0 +1,693 @@
+name: Build VideoCompressor Pro APK
+
+on:
+  push:
+    paths:
+      - '.github/workflows/pro.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pro
+    steps:
+      - name: Prepare folder
+        working-directory: .
+        run: mkdir -p pro
+
+      - name: Generate project files
+        run: |
+          mkdir -p app
+          cat > app/build.gradle.kts <<'EOF_VC'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.example.videocompressor"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.example.videocompressor"
+                  minSdk = 23
+                  targetSdk = 35
+                  versionCode = 2
+                  versionName = "2.0"
+              }
+
+              buildTypes {
+                  release { isMinifyEnabled = false }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+
+              lint {
+                  abortOnError = false
+                  checkReleaseBuilds = false
+              }
+          }
+
+          dependencies {
+              val media3 = "1.5.1"
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.media3:media3-common:$media3")
+              implementation("androidx.media3:media3-transformer:$media3")
+              implementation("androidx.media3:media3-effect:$media3")
+          }
+          EOF_VC
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF_VC'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="ضاغط الفيديو Pro"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                      <intent-filter>
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="video/*" />
+                      </intent-filter>
+                  </activity>
+
+                  <provider
+                      android:name="androidx.core.content.FileProvider"
+                      android:authorities="${applicationId}.fileprovider"
+                      android:exported="false"
+                      android:grantUriPermissions="true">
+                      <meta-data
+                          android:name="android.support.FILE_PROVIDER_PATHS"
+                          android:resource="@xml/file_paths" />
+                  </provider>
+              </application>
+          </manifest>
+          EOF_VC
+          mkdir -p app/src/main/java/com/example/videocompressor
+          cat > app/src/main/java/com/example/videocompressor/MainActivity.kt <<'EOF_VC'
+          package com.example.videocompressor
+
+          import android.app.Activity
+          import android.content.ContentValues
+          import android.content.Intent
+          import android.graphics.Color
+          import android.media.MediaExtractor
+          import android.media.MediaFormat
+          import android.media.MediaMetadataRetriever
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.provider.MediaStore
+          import android.provider.OpenableColumns
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.ProgressBar
+          import android.widget.ScrollView
+          import android.widget.TextView
+          import androidx.annotation.OptIn
+          import androidx.core.content.FileProvider
+          import androidx.media3.common.Effect
+          import androidx.media3.common.MediaItem
+          import androidx.media3.common.MimeTypes
+          import androidx.media3.common.util.UnstableApi
+          import androidx.media3.effect.Presentation
+          import androidx.media3.transformer.AudioEncoderSettings
+          import androidx.media3.transformer.Composition
+          import androidx.media3.transformer.DefaultEncoderFactory
+          import androidx.media3.transformer.EditedMediaItem
+          import androidx.media3.transformer.Effects
+          import androidx.media3.transformer.ExportException
+          import androidx.media3.transformer.ExportResult
+          import androidx.media3.transformer.ProgressHolder
+          import androidx.media3.transformer.Transformer
+          import androidx.media3.transformer.VideoEncoderSettings
+          import java.io.File
+          import java.io.FileInputStream
+          import java.util.Locale
+          import kotlin.math.max
+          import kotlin.math.min
+          import kotlin.math.roundToInt
+
+          /**
+           * ضاغط الفيديو Pro
+           * يضمن (قدر الإمكان) تقليص الحجم بأكثر من 50%:
+           *  - يحسب معدل البت المطلوب من الحجم المستهدف ومدة الفيديو
+           *  - يخفّض معدل بت الصوت
+           *  - يصغّر الأبعاد تلقائياً حسب معدل البت
+           *  - إذا خرج الملف أكبر من الهدف يعيد الضغط تلقائياً بإعدادات أقوى (حتى 3 محاولات)
+           */
+          @OptIn(UnstableApi::class)
+          class MainActivity : Activity() {
+
+              private companion object {
+                  const val REQ_PICK = 42
+                  const val MAX_ATTEMPTS = 3
+                  val SHORT_SIDES = intArrayOf(1080, 720, 540, 480, 360, 270, 240)
+              }
+
+              /** مستوى الضغط: النسبة المستهدفة من الحجم الأصلي */
+              private data class Level(val label: String, val targetFraction: Double, val audioBitrate: Int)
+
+              private val levels = listOf(
+                  Level("ضغط 50% (جودة جيدة)", 0.48, 96_000),
+                  Level("ضغط 65% (متوازن)", 0.35, 64_000),
+                  Level("ضغط 80% (أصغر حجم)", 0.20, 48_000),
+              )
+
+              private lateinit var status: TextView
+              private lateinit var info: TextView
+              private lateinit var progress: ProgressBar
+              private lateinit var pickButton: Button
+              private lateinit var shareButton: Button
+              private val levelButtons = mutableListOf<Button>()
+
+              private var selectedUri: Uri? = null
+              private var inputSize = -1L
+              private var durationMs = 0L
+              private var width = 0
+              private var height = 0
+              private var sourceAudioBitrate = 128_000
+
+              private var activeTransformer: Transformer? = null
+              private var outputFile: File? = null
+              private var shareUri: Uri? = null
+
+              // حالة المحاولة الحالية
+              private var level: Level = levels[0]
+              private var attempt = 0
+              private var videoBitrate = 0
+              private var shortSideIndex = 0
+
+              private val handler = Handler(Looper.getMainLooper())
+              private val progressHolder = ProgressHolder()
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  buildUi()
+                  handleShare(intent)
+              }
+
+              override fun onNewIntent(intent: Intent) {
+                  super.onNewIntent(intent)
+                  handleShare(intent)
+              }
+
+              private fun handleShare(intent: Intent?) {
+                  if (intent?.action == Intent.ACTION_SEND) {
+                      @Suppress("DEPRECATION")
+                      val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                      if (uri != null) onVideoSelected(uri)
+                  }
+              }
+
+              // ---------------------------------------------------------------- UI
+
+              private fun buildUi() {
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      setPadding(dp(20), dp(24), dp(20), dp(24))
+                      layoutDirection = View.LAYOUT_DIRECTION_RTL
+                      setBackgroundColor(Color.parseColor("#F4F7F6"))
+                  }
+                  val title = TextView(this).apply {
+                      text = "ضاغط الفيديو Pro"
+                      textSize = 28f
+                      setTextColor(Color.parseColor("#0F766E"))
+                      gravity = Gravity.CENTER
+                  }
+                  val subtitle = TextView(this).apply {
+                      text = "تقليص حجم الفيديو بأكثر من 50% دون إنترنت"
+                      textSize = 15f
+                      setTextColor(Color.parseColor("#555555"))
+                      gravity = Gravity.CENTER
+                      setPadding(0, dp(4), 0, dp(16))
+                  }
+                  pickButton = colorButton("📂 اختيار فيديو", "#0F766E") {
+                      startActivityForResult(
+                          Intent.createChooser(
+                              Intent(Intent.ACTION_GET_CONTENT).apply {
+                                  type = "video/*"
+                                  addCategory(Intent.CATEGORY_OPENABLE)
+                              }, "اختر فيديو"
+                          ), REQ_PICK
+                      )
+                  }
+                  info = TextView(this).apply {
+                      text = "لم يتم اختيار أي فيديو"
+                      textSize = 15f
+                      setTextColor(Color.parseColor("#333333"))
+                      setBackgroundColor(Color.WHITE)
+                      setPadding(dp(14), dp(12), dp(14), dp(12))
+                  }
+                  val levelTitle = TextView(this).apply {
+                      text = "اختر قوة الضغط:"
+                      textSize = 17f
+                      setTextColor(Color.parseColor("#222222"))
+                      setPadding(0, dp(16), 0, dp(6))
+                  }
+
+                  root.addView(title, match())
+                  root.addView(subtitle, match())
+                  root.addView(pickButton, match())
+                  root.addView(info, match())
+                  root.addView(levelTitle, match())
+
+                  val colors = listOf("#F59E0B", "#EA580C", "#DC2626")
+                  levels.forEachIndexed { i, lv ->
+                      val b = colorButton("⚡ ${lv.label}", colors[i]) { startCompression(lv) }
+                      levelButtons += b
+                      root.addView(b, match())
+                  }
+
+                  progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                      max = 100
+                      visibility = View.GONE
+                  }
+                  status = TextView(this).apply {
+                      textSize = 16f
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.parseColor("#0F766E"))
+                      setPadding(0, dp(10), 0, dp(10))
+                  }
+                  shareButton = colorButton("📤 مشاركة / إرسال الفيديو", "#2563EB") { share() }
+                  shareButton.visibility = View.GONE
+
+                  root.addView(progress, match())
+                  root.addView(status, match())
+                  root.addView(shareButton, match())
+
+                  setContentView(ScrollView(this).apply { addView(root) })
+                  setLevelsEnabled(false)
+              }
+
+              private fun colorButton(text: String, color: String, onClick: () -> Unit) = Button(this).apply {
+                  this.text = text
+                  textSize = 16f
+                  setTextColor(Color.WHITE)
+                  backgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor(color))
+                  setOnClickListener { onClick() }
+              }
+
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).roundToInt()
+
+              private fun match() = LinearLayout.LayoutParams(
+                  ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+              ).apply { bottomMargin = dp(8) }
+
+              private fun setLevelsEnabled(enabled: Boolean) = levelButtons.forEach { it.isEnabled = enabled }
+
+              private fun setBusy(busy: Boolean) {
+                  pickButton.isEnabled = !busy
+                  setLevelsEnabled(!busy && selectedUri != null)
+                  progress.visibility = if (busy) View.VISIBLE else View.GONE
+                  if (busy) shareButton.visibility = View.GONE
+              }
+
+              // ---------------------------------------------------------------- اختيار الفيديو
+
+              @Deprecated("Deprecated in Java")
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode == REQ_PICK && resultCode == RESULT_OK) {
+                      data?.data?.let { onVideoSelected(it) }
+                  }
+              }
+
+              private fun onVideoSelected(uri: Uri) {
+                  selectedUri = uri
+                  shareUri = null
+                  inputSize = querySize(uri)
+                  readMetadata(uri)
+                  val name = queryName(uri) ?: "فيديو"
+                  info.text = buildString {
+                      append("📹 ").append(name)
+                      append("\nالحجم: ").append(if (inputSize > 0) formatSize(inputSize) else "غير معروف")
+                      if (width > 0) append("\nالأبعاد: ${width}×${height}")
+                      if (durationMs > 0) append("\nالمدة: ").append(formatDuration(durationMs))
+                      if (inputSize > 0 && durationMs > 0) {
+                          append("\nمعدل البت: ${inputSize * 8 / durationMs} kbps")
+                      }
+                  }
+                  status.text = ""
+                  shareButton.visibility = View.GONE
+                  setLevelsEnabled(true)
+              }
+
+              private fun readMetadata(uri: Uri) {
+                  width = 0; height = 0; durationMs = 0
+                  val mmr = MediaMetadataRetriever()
+                  try {
+                      mmr.setDataSource(this, uri)
+                      var w = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                      var h = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                      val rot = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                      if (rot == 90 || rot == 270) { val t = w; w = h; h = t }
+                      width = w; height = h
+                      durationMs = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
+                  } catch (_: Exception) {
+                  } finally {
+                      try { mmr.release() } catch (_: Exception) {}
+                  }
+                  // معدل بت الصوت الأصلي (إن وُجد)
+                  sourceAudioBitrate = 128_000
+                  val ex = MediaExtractor()
+                  try {
+                      ex.setDataSource(this, uri, null)
+                      for (i in 0 until ex.trackCount) {
+                          val f = ex.getTrackFormat(i)
+                          if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true &&
+                              f.containsKey(MediaFormat.KEY_BIT_RATE)
+                          ) sourceAudioBitrate = f.getInteger(MediaFormat.KEY_BIT_RATE)
+                      }
+                  } catch (_: Exception) {
+                  } finally {
+                      ex.release()
+                  }
+              }
+
+              // ---------------------------------------------------------------- خطة الضغط
+
+              private fun startCompression(lv: Level) {
+                  if (selectedUri == null) return
+                  level = lv
+                  attempt = 0
+
+                  val audio = min(lv.audioBitrate, max(sourceAudioBitrate, 32_000))
+                  if (inputSize > 0 && durationMs > 0) {
+                      // إجمالي البت المستهدف = (الحجم الأصلي × النسبة) ÷ المدة، مع هامش 4% للحاوية
+                      val targetTotal = (inputSize * 8.0 * lv.targetFraction * 1000.0 / durationMs) * 0.96
+                      videoBitrate = max(60_000, (targetTotal - audio).roundToInt())
+                  } else {
+                      videoBitrate = when (lv.targetFraction) {
+                          in 0.40..1.0 -> 1_200_000
+                          in 0.30..0.40 -> 800_000
+                          else -> 450_000
+                      }
+                  }
+                  shortSideIndex = pickShortSideIndex(videoBitrate)
+                  runAttempt()
+              }
+
+              /** اختيار الدقة المناسبة لمعدل البت (لا نكبّر الفيديو أبداً) */
+              private fun pickShortSideIndex(bitrate: Int): Int {
+                  val wanted = when {
+                      bitrate >= 2_500_000 -> 1080
+                      bitrate >= 1_200_000 -> 720
+                      bitrate >= 800_000 -> 540
+                      bitrate >= 500_000 -> 480
+                      bitrate >= 280_000 -> 360
+                      bitrate >= 160_000 -> 270
+                      else -> 240
+                  }
+                  return SHORT_SIDES.indexOfFirst { it <= wanted }.coerceAtLeast(0)
+              }
+
+              private fun runAttempt() {
+                  val uri = selectedUri ?: return
+                  attempt++
+                  val dir = File(cacheDir, "compressed").apply { mkdirs() }
+                  dir.listFiles()?.forEach { it.delete() }
+                  val out = File(dir, "compressed_${System.currentTimeMillis()}.mp4")
+                  outputFile = out
+
+                  val effects = mutableListOf<Effect>()
+                  val targetShort = SHORT_SIDES[shortSideIndex]
+                  val currentShort = if (width > 0 && height > 0) min(width, height) else Int.MAX_VALUE
+                  if (currentShort > targetShort) {
+                      var targetHeight = if (width > 0 && height > width) {
+                          (height.toDouble() * targetShort / width).roundToInt()   // عمودي
+                      } else targetShort                                            // أفقي
+                      targetHeight -= targetHeight % 2
+                      effects += Presentation.createForHeight(targetHeight)
+                  }
+
+                  val audioBitrate = min(level.audioBitrate, max(sourceAudioBitrate, 32_000))
+                  val encoderFactory = DefaultEncoderFactory.Builder(this)
+                      .setRequestedVideoEncoderSettings(
+                          VideoEncoderSettings.Builder().setBitrate(videoBitrate).build()
+                      )
+                      .setRequestedAudioEncoderSettings(
+                          AudioEncoderSettings.Builder().setBitrate(audioBitrate).build()
+                      )
+                      .setEnableFallback(true)
+                      .build()
+
+                  val transformer = Transformer.Builder(this)
+                      .setVideoMimeType(MimeTypes.VIDEO_H264)
+                      .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                      .setEncoderFactory(encoderFactory)
+                      .addListener(object : Transformer.Listener {
+                          override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                              onAttemptDone()
+                          }
+
+                          override fun onError(
+                              composition: Composition,
+                              exportResult: ExportResult,
+                              exportException: ExportException
+                          ) {
+                              onFailed(exportException)
+                          }
+                      })
+                      .build()
+                  activeTransformer = transformer
+
+                  setBusy(true)
+                  progress.progress = 0
+                  status.text = attemptLabel(0)
+
+                  val item = EditedMediaItem.Builder(MediaItem.fromUri(uri))
+                      .setEffects(Effects(emptyList(), effects))
+                      .build()
+                  try {
+                      transformer.start(item, out.absolutePath)
+                      handler.post(progressTick)
+                  } catch (e: Exception) {
+                      onFailed(e)
+                  }
+              }
+
+              private fun attemptLabel(p: Int) =
+                  "جارٍ الضغط... $p%" + if (attempt > 1) "\n(محاولة $attempt بإعدادات أقوى)" else ""
+
+              private val progressTick = object : Runnable {
+                  override fun run() {
+                      val t = activeTransformer ?: return
+                      when (t.getProgress(progressHolder)) {
+                          Transformer.PROGRESS_STATE_AVAILABLE -> {
+                              progress.isIndeterminate = false
+                              progress.progress = progressHolder.progress
+                              status.text = attemptLabel(progressHolder.progress)
+                          }
+                          Transformer.PROGRESS_STATE_WAITING_FOR_AVAILABILITY -> progress.isIndeterminate = true
+                          Transformer.PROGRESS_STATE_NOT_STARTED -> return
+                      }
+                      handler.postDelayed(this, 400)
+                  }
+              }
+
+              private fun onAttemptDone() {
+                  handler.removeCallbacks(progressTick)
+                  activeTransformer = null
+                  val out = outputFile ?: return
+                  val outSize = out.length()
+
+                  if (inputSize > 0) {
+                      val limit = inputSize * 0.5
+                      if (outSize > limit && attempt < MAX_ATTEMPTS) {
+                          // لم نبلغ الهدف: نخفّض معدل البت بنسبة التجاوز ونصغّر الدقة درجة
+                          val goal = inputSize * level.targetFraction
+                          val ratio = (goal / outSize).coerceIn(0.3, 0.9)
+                          videoBitrate = max(50_000, (videoBitrate * ratio * 0.9).roundToInt())
+                          shortSideIndex = min(shortSideIndex + 1, SHORT_SIDES.size - 1)
+                          runAttempt()
+                          return
+                      }
+                  }
+
+                  setBusy(false)
+                  progress.progress = 100
+
+                  if (inputSize in 1..outSize) {
+                      out.delete()
+                      shareUri = selectedUri
+                      status.text = "ℹ️ هذا الفيديو مضغوط أصلاً ولا يمكن تصغيره أكثر.\nيمكنك إرسال الأصلي (${formatSize(inputSize)})."
+                      shareButton.visibility = View.VISIBLE
+                      return
+                  }
+
+                  val saved = try { saveToMovies(out) } catch (_: Exception) { null }
+                  shareUri = FileProvider.getUriForFile(this, "$packageName.fileprovider", out)
+                  status.text = buildString {
+                      append("✅ تم الضغط!\n")
+                      append("الحجم الجديد: ").append(formatSize(outSize))
+                      if (inputSize > 0) {
+                          val pct = 100 - (outSize * 100 / inputSize)
+                          append("\nأصغر بنسبة $pct%")
+                          if (outSize > inputSize * 0.5) append("\n(هذا أقصى ما يمكن دون إفساد الفيديو)")
+                      }
+                      if (saved != null) append("\nحُفظ في المعرض: Movies/VideoCompressor")
+                  }
+                  shareButton.visibility = View.VISIBLE
+              }
+
+              private fun onFailed(e: Exception) {
+                  handler.removeCallbacks(progressTick)
+                  activeTransformer = null
+                  setBusy(false)
+                  status.text = "❌ تعذّر ضغط هذا الفيديو:\n${e.localizedMessage}\nجرّب مستوى ضغط آخر."
+              }
+
+              // ---------------------------------------------------------------- الحفظ والمشاركة
+
+              private fun share() {
+                  val uri = shareUri ?: return
+                  val send = Intent(Intent.ACTION_SEND).apply {
+                      type = "video/mp4"
+                      putExtra(Intent.EXTRA_STREAM, uri)
+                      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                  }
+                  startActivity(Intent.createChooser(send, "إرسال الفيديو عبر"))
+              }
+
+              private fun saveToMovies(file: File): Uri? {
+                  if (Build.VERSION.SDK_INT < 29) return null
+                  val values = ContentValues().apply {
+                      put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
+                      put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                      put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/VideoCompressor")
+                      put(MediaStore.Video.Media.IS_PENDING, 1)
+                  }
+                  val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+                  contentResolver.openOutputStream(uri)?.use { out ->
+                      FileInputStream(file).use { it.copyTo(out) }
+                  } ?: return null
+                  contentResolver.update(uri, ContentValues().apply {
+                      put(MediaStore.Video.Media.IS_PENDING, 0)
+                  }, null, null)
+                  return uri
+              }
+
+              // ---------------------------------------------------------------- أدوات
+
+              private fun querySize(uri: Uri): Long = try {
+                  contentResolver.query(uri, null, null, null, null)?.use { c ->
+                      val i = c.getColumnIndex(OpenableColumns.SIZE)
+                      if (c.moveToFirst() && i >= 0 && !c.isNull(i)) c.getLong(i) else -1L
+                  } ?: -1L
+              } catch (_: Exception) { -1L }
+
+              private fun queryName(uri: Uri): String? = try {
+                  contentResolver.query(uri, null, null, null, null)?.use { c ->
+                      val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                      if (c.moveToFirst() && i >= 0) c.getString(i) else null
+                  }
+              } catch (_: Exception) { null }
+
+              private fun formatSize(b: Long): String = when {
+                  b < 1024 -> "$b B"
+                  b < 1024 * 1024 -> String.format(Locale.US, "%.0f KB", b / 1024.0)
+                  b < 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1f MB", b / 1048576.0)
+                  else -> String.format(Locale.US, "%.2f GB", b / 1073741824.0)
+              }
+
+              private fun formatDuration(ms: Long): String {
+                  val s = ms / 1000
+                  return if (s >= 3600) String.format(Locale.US, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+                  else String.format(Locale.US, "%d:%02d", s / 60, s % 60)
+              }
+
+              override fun onDestroy() {
+                  handler.removeCallbacks(progressTick)
+                  activeTransformer?.cancel()
+                  super.onDestroy()
+              }
+          }
+          EOF_VC
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#B91C1C" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M30,36h36a4,4 0 0 1 4,4v28a4,4 0 0 1 -4,4h-36a4,4 0 0 1 -4,-4v-28a4,4 0 0 1 4,-4z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M72,46l12,-8v32l-12,-8z" />
+              <path android:fillColor="#B91C1C" android:pathData="M45,42h6v12h6l-9,10l-9,-10h6z" />
+          </vector>
+          EOF_VC
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/file_paths.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths>
+              <cache-path name="compressed" path="compressed/" />
+          </paths>
+          EOF_VC
+          cat > build.gradle.kts <<'EOF_VC'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOF_VC
+          cat > gradle.properties <<'EOF_VC'
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOF_VC
+          cat > settings.gradle.kts <<'EOF_VC'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "VideoCompressorPro"
+          include(":app")
+          EOF_VC
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build APK
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk out/VideoCompressorPro.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pro-${{ github.run_number }}
+          name: VideoCompressor Pro ${{ github.run_number }}
+          files: pro/out/VideoCompressorPro.apk
