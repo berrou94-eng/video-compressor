@@ -27,8 +27,8 @@ jobs:
                   applicationId 'com.omar.videocompressor'
                   minSdk 24
                   targetSdk 34
-                  versionCode 1
-                  versionName '1.0'
+                  versionCode 2
+                  versionName '1.1'
               }
 
               buildTypes {
@@ -164,6 +164,7 @@ jobs:
               private Uri inputUri;
               private long inputSize = -1;
               private File outputFile;
+              private boolean useOriginal = false;
               private Transformer transformer;
               private final Handler handler = new Handler(Looper.getMainLooper());
               private final ProgressHolder progressHolder = new ProgressHolder();
@@ -231,6 +232,7 @@ jobs:
                   txtInfo.setText(sb.toString());
 
                   btnCompress.setEnabled(true);
+                  useOriginal = false;
                   btnShare.setVisibility(View.GONE);
                   txtStatus.setText("");
                   progressBar.setVisibility(View.GONE);
@@ -262,6 +264,13 @@ jobs:
 
                   // حساب الارتفاع الناتج بحيث يصبح الضلع الأقصر = shortSide (بدون تكبير)
                   int[] dims = readDimensions(inputUri);
+
+                  // لا نتجاوز أبداً معدل البت الأصلي: نستهدف ~45% منه
+                  if (inputSize > 0 && dims[2] > 0) {
+                      long src = inputSize * 8L * 1000L / dims[2];
+                      int cap = (int) Math.max(150_000L, src * 45L / 100L);
+                      if (bitrate > cap) bitrate = cap;
+                  }
                   ArrayList<androidx.media3.common.Effect> videoEffects = new ArrayList<>();
                   int w = dims[0], h = dims[1];
                   if (w > 0 && h > 0) {
@@ -339,6 +348,14 @@ jobs:
                   progressBar.setProgress(100);
 
                   long outSize = outputFile.length();
+                  if (inputSize > 0 && outSize >= inputSize) {
+                      outputFile.delete();
+                      useOriginal = true;
+                      txtStatus.setText("ℹ️ هذا الفيديو مضغوط أصلاً (" + formatSize(inputSize) + ")\nولا يمكن تصغيره أكثر دون إفساد جودته.\nيمكنك إرسال الأصلي مباشرة.");
+                      btnShare.setVisibility(View.VISIBLE);
+                      return;
+                  }
+                  useOriginal = false;
                   String msg = "✅ تم الضغط!\nالحجم الجديد: " + formatSize(outSize);
                   if (inputSize > 0) {
                       long saved = 100 - (outSize * 100 / inputSize);
@@ -373,8 +390,13 @@ jobs:
               }
 
               private void shareOutput() {
-                  if (outputFile == null || !outputFile.exists()) return;
-                  Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", outputFile);
+                  Uri uri;
+                  if (useOriginal && inputUri != null) {
+                      uri = inputUri;
+                  } else {
+                      if (outputFile == null || !outputFile.exists()) return;
+                      uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", outputFile);
+                  }
                   Intent share = new Intent(Intent.ACTION_SEND);
                   share.setType("video/mp4");
                   share.putExtra(Intent.EXTRA_STREAM, uri);
