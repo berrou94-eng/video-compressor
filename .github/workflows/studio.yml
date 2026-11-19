@@ -1,0 +1,2076 @@
+name: Build Video Toolkit
+
+on:
+  push:
+    paths:
+      - '.github/workflows/studio.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vt
+    steps:
+      - name: Prepare folder
+        working-directory: .
+        run: mkdir -p vt
+
+      - name: Generate project files
+        run: |
+          mkdir -p app
+          cat > app/build.gradle.kts <<'EOF_VC'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.omar.videotoolkit"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.omar.videotoolkit"
+                  minSdk = 24
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              buildTypes { release { isMinifyEnabled = false } }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+              lint { abortOnError = false; checkReleaseBuilds = false }
+          }
+
+          dependencies {
+              val media3 = "1.5.1"
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+              implementation("com.google.android.material:material:1.12.0")
+              implementation("androidx.media3:media3-common:$media3")
+              implementation("androidx.media3:media3-transformer:$media3")
+              implementation("androidx.media3:media3-effect:$media3")
+          }
+          EOF_VC
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF_VC'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission
+                  android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="28" />
+
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
+                  android:theme="@style/AppTheme">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <activity
+                      android:name=".ToolActivity"
+                      android:exported="true"
+                      android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="video/*" />
+                      </intent-filter>
+                  </activity>
+                  <activity
+                      android:name=".CreationsActivity"
+                      android:exported="false"
+                      android:screenOrientation="portrait" />
+
+                  <provider
+                      android:name="androidx.core.content.FileProvider"
+                      android:authorities="${applicationId}.fileprovider"
+                      android:exported="false"
+                      android:grantUriPermissions="true">
+                      <meta-data
+                          android:name="android.support.FILE_PROVIDER_PATHS"
+                          android:resource="@xml/file_paths" />
+                  </provider>
+              </application>
+          </manifest>
+          EOF_VC
+          mkdir -p app/src/main/java/com/omar/videotoolkit
+          cat > app/src/main/java/com/omar/videotoolkit/CreationsActivity.kt <<'EOF_VC'
+          package com.omar.videotoolkit
+
+          import android.graphics.Color
+          import android.os.Bundle
+          import android.view.Gravity
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import androidx.appcompat.app.AppCompatActivity
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+
+          class CreationsActivity : AppCompatActivity() {
+
+              private lateinit var list: LinearLayout
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  Lang.load(this)
+                  val scroll = ScrollView(this).apply { setBackgroundColor(C.BG) }
+                  val root = vbox(18).apply { layoutDirection = Lang.dir }
+                  scroll.addView(root)
+
+                  val top = hbox()
+                  top.addView(label(if (Lang.ar) "→" else "←", 26f, C.TEXT, true).apply {
+                      setPadding(dp(4), 0, dp(14), 0)
+                      setOnClickListener { finish() }
+                  })
+                  top.addView(label("🎬  " + tr("إبداعاتي", "My Creations"), 22f, C.TEXT, true))
+                  root.addView(top, lp(bottom = 16))
+
+                  list = vbox()
+                  root.addView(list, lp())
+                  setContentView(scroll)
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  render()
+              }
+
+              private fun render() {
+                  list.removeAllViews()
+                  val items = Creations.all(this)
+                  if (items.isEmpty()) {
+                      list.addView(label(tr("لا توجد ملفات بعد.\nكل ما تنشئه بالتطبيق سيظهر هنا.",
+                          "Nothing yet.\nEverything you create will show up here."), 16f, C.SUB).apply {
+                          gravity = Gravity.CENTER
+                      }, lp(top = 80))
+                      return
+                  }
+                  val fmt = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
+                  items.forEach { item ->
+                      val icon = when (item.kind) {
+                          Media.Kind.VIDEO -> "🎬"
+                          Media.Kind.AUDIO -> "🎵"
+                          Media.Kind.GIF -> "🎞️"
+                          Media.Kind.IMAGE -> "📸"
+                      }
+                      val card = vbox(14).apply { background = round(C.CARD, 18f) }
+                      val head = hbox()
+                      head.addView(label(icon, 26f), lp(w = -2))
+                      head.addView(vbox().apply {
+                          addView(label(item.name, 14f, C.TEXT, true).apply { maxLines = 1 })
+                          addView(label(formatSize(item.size) + "  •  " + fmt.format(Date(item.time)), 12f, C.SUB))
+                      }, lp(w = 0, weight = 1f, start = 10))
+                      card.addView(head, lp())
+                      val row = hbox()
+                      row.addView(secondaryButton(tr("▶ فتح", "▶ Open")) { Media.open(this, item.uri, item.kind.mime) },
+                          lp(w = 0, weight = 1f, end = 4))
+                      row.addView(secondaryButton(tr("📤 مشاركة", "📤 Share"), Color.parseColor("#2563EB")) {
+                          Media.share(this, item.uri, item.kind.mime)
+                      }, lp(w = 0, weight = 1f, start = 4, end = 4))
+                      row.addView(secondaryButton("✕") {
+                          Creations.remove(this, item); render()
+                      }, lp(w = dp(52), start = 4))
+                      card.addView(row, lp(top = 10))
+                      list.addView(card, lp(bottom = 12))
+                  }
+                  list.addView(label(tr("زر ✕ يزيل الملف من القائمة فقط، ويبقى في المعرض.",
+                      "✕ only removes it from this list; the file stays in your gallery."), 12f, C.SUB).apply {
+                      gravity = Gravity.CENTER
+                  }, lp(top = 4))
+              }
+          }
+          EOF_VC
+          mkdir -p app/src/main/java/com/omar/videotoolkit
+          cat > app/src/main/java/com/omar/videotoolkit/Exporter.kt <<'EOF_VC'
+          package com.omar.videotoolkit
+
+          import android.content.Context
+          import android.os.Handler
+          import android.os.Looper
+          import androidx.annotation.OptIn
+          import androidx.media3.common.MimeTypes
+          import androidx.media3.common.util.UnstableApi
+          import androidx.media3.transformer.AudioEncoderSettings
+          import androidx.media3.transformer.Composition
+          import androidx.media3.transformer.DefaultEncoderFactory
+          import androidx.media3.transformer.EditedMediaItem
+          import androidx.media3.transformer.EditedMediaItemSequence
+          import androidx.media3.transformer.ExportException
+          import androidx.media3.transformer.ExportResult
+          import androidx.media3.transformer.ProgressHolder
+          import androidx.media3.transformer.Transformer
+          import androidx.media3.transformer.VideoEncoderSettings
+          import java.io.File
+
+          /** غلاف حول Media3 Transformer مع شريط تقدّم */
+          @OptIn(UnstableApi::class)
+          class Exporter(private val ctx: Context) {
+
+              var onProgress: (Int) -> Unit = {}
+              var onDone: (File) -> Unit = {}
+              var onError: (String) -> Unit = {}
+
+              private var transformer: Transformer? = null
+              private var output: File? = null
+              private val handler = Handler(Looper.getMainLooper())
+              private val holder = ProgressHolder()
+
+              val running get() = transformer != null
+
+              /**
+               * @param videoMime null = بدون مسار فيديو (صوت فقط)
+               * @param videoBitrate 0 = تلقائي
+               * @param audioBitrate 0 = تلقائي
+               */
+              fun start(items: List<EditedMediaItem>, out: File, videoMime: String?, videoBitrate: Int, audioBitrate: Int) {
+                  output = out
+                  val ef = DefaultEncoderFactory.Builder(ctx).setEnableFallback(true)
+                  if (videoBitrate > 0) {
+                      ef.setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(videoBitrate).build())
+                  }
+                  if (audioBitrate > 0) {
+                      ef.setRequestedAudioEncoderSettings(AudioEncoderSettings.Builder().setBitrate(audioBitrate).build())
+                  }
+                  val builder = Transformer.Builder(ctx)
+                      .setEncoderFactory(ef.build())
+                      .setAudioMimeType(MimeTypes.AUDIO_AAC)
+                  if (videoMime != null) builder.setVideoMimeType(videoMime)
+                  builder.addListener(object : Transformer.Listener {
+                      override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                          stopTicking()
+                          transformer = null
+                          onDone(out)
+                      }
+
+                      override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+                          stopTicking()
+                          transformer = null
+                          out.delete()
+                          onError(exportException.localizedMessage ?: exportException.errorCodeName)
+                      }
+                  })
+                  val t = builder.build()
+                  transformer = t
+                  try {
+                      val composition = Composition.Builder(EditedMediaItemSequence(items)).build()
+                      t.start(composition, out.absolutePath)
+                      handler.post(tick)
+                  } catch (e: Exception) {
+                      transformer = null
+                      onError(e.localizedMessage ?: e.toString())
+                  }
+              }
+
+              fun cancel() {
+                  stopTicking()
+                  transformer?.cancel()
+                  transformer = null
+                  output?.delete()
+              }
+
+              private fun stopTicking() = handler.removeCallbacks(tick)
+
+              private val tick = object : Runnable {
+                  override fun run() {
+                      val t = transformer ?: return
+                      if (t.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) onProgress(holder.progress)
+                      handler.postDelayed(this, 350)
+                  }
+              }
+
+              companion object {
+                  /** اختيار الضلع القصير المناسب لمعدل بت معيّن */
+                  fun shortSideFor(bitrate: Int): Int = when {
+                      bitrate >= 4_000_000 -> 1080
+                      bitrate >= 1_800_000 -> 720
+                      bitrate >= 1_000_000 -> 540
+                      bitrate >= 600_000 -> 480
+                      bitrate >= 330_000 -> 360
+                      bitrate >= 180_000 -> 270
+                      else -> 240
+                  }
+
+                  /** الارتفاع الناتج ليصبح الضلع القصير = target (بدون تكبير). يُرجع 0 إذا لا حاجة للتصغير */
+                  fun targetHeight(w: Int, h: Int, targetShort: Int): Int {
+                      if (w <= 0 || h <= 0) return targetShort
+                      if (minOf(w, h) <= targetShort) return 0
+                      var th = if (h > w) (h.toDouble() * targetShort / w).toInt() else targetShort
+                      th -= th % 2
+                      return th
+                  }
+              }
+          }
+          EOF_VC
+          mkdir -p app/src/main/java/com/omar/videotoolkit
+          cat > app/src/main/java/com/omar/videotoolkit/GifEncoder.kt <<'EOF_VC'
+          package com.omar.videotoolkit
+
+          import android.graphics.Bitmap
+          import java.io.BufferedOutputStream
+          import java.io.File
+          import java.io.FileOutputStream
+          import java.io.OutputStream
+
+          /**
+           * مُرمِّز GIF بسيط بلوحة ألوان ثابتة (6×7×6 = 252 لوناً) مع تنعيم Bayer.
+           * لا يحتاج أي مكتبة خارجية.
+           */
+          class GifEncoder(file: File, private val width: Int, private val height: Int, private val delayCs: Int) {
+
+              private val out: OutputStream = BufferedOutputStream(FileOutputStream(file), 1 shl 16)
+              private val indexed = ByteArray(width * height)
+              private val pixels = IntArray(width * height)
+
+              private val bayer = intArrayOf(
+                  0, 8, 2, 10,
+                  12, 4, 14, 6,
+                  3, 11, 1, 9,
+                  15, 7, 13, 5
+              )
+
+              init {
+                  out.write("GIF89a".toByteArray())
+                  writeShort(width); writeShort(height)
+                  out.write(0xF7)          // جدول ألوان عام بحجم 256
+                  out.write(0); out.write(0)
+                  // جدول الألوان
+                  for (i in 0 until 256) {
+                      if (i < 252) {
+                          val r = i / 42; val g = (i / 6) % 7; val b = i % 6
+                          out.write(r * 51); out.write((g * 255) / 6); out.write(b * 51)
+                      } else {
+                          out.write(0); out.write(0); out.write(0)
+                      }
+                  }
+                  // تكرار لا نهائي
+                  out.write(0x21); out.write(0xFF); out.write(0x0B)
+                  out.write("NETSCAPE2.0".toByteArray())
+                  out.write(0x03); out.write(0x01); writeShort(0); out.write(0x00)
+              }
+
+              fun addFrame(src: Bitmap) {
+                  val bmp = if (src.width != width || src.height != height)
+                      Bitmap.createScaledBitmap(src, width, height, true) else src
+                  bmp.getPixels(pixels, 0, width, 0, 0, width, height)
+                  for (y in 0 until height) {
+                      for (x in 0 until width) {
+                          val p = pixels[y * width + x]
+                          val t = bayer[(y and 3) * 4 + (x and 3)] - 8   // -8..7
+                          val r = (((p shr 16) and 0xFF) + t * 3).coerceIn(0, 255)
+                          val g = (((p shr 8) and 0xFF) + t * 3).coerceIn(0, 255)
+                          val b = ((p and 0xFF) + t * 3).coerceIn(0, 255)
+                          val ri = (r * 5 + 127) / 255
+                          val gi = (g * 6 + 127) / 255
+                          val bi = (b * 5 + 127) / 255
+                          indexed[y * width + x] = (ri * 42 + gi * 6 + bi).toByte()
+                      }
+                  }
+                  // Graphic Control Extension
+                  out.write(0x21); out.write(0xF9); out.write(0x04)
+                  out.write(0x04)              // disposal = 1
+                  writeShort(delayCs)
+                  out.write(0); out.write(0)
+                  // Image Descriptor
+                  out.write(0x2C)
+                  writeShort(0); writeShort(0); writeShort(width); writeShort(height)
+                  out.write(0x00)
+                  lzw()
+                  if (bmp !== src) bmp.recycle()
+              }
+
+              fun finish() {
+                  out.write(0x3B)
+                  out.flush()
+                  out.close()
+              }
+
+              private fun writeShort(v: Int) {
+                  out.write(v and 0xFF); out.write((v shr 8) and 0xFF)
+              }
+
+              // ---------------------------------------------------------------- LZW
+              private var curAccum = 0
+              private var curBits = 0
+              private val block = ByteArray(256)
+              private var blockLen = 0
+              private var nBits = 9
+              private var maxCode = 511
+              private var freeEnt = 258
+              private var clearFlag = false
+
+              private fun lzw() {
+                  val clearCode = 256
+                  val eofCode = 257
+                  val maxMaxCode = 4096
+                  val table = HashMap<Int, Int>(8192)
+
+                  out.write(8)  // min code size
+                  curAccum = 0; curBits = 0; blockLen = 0
+                  nBits = 9; maxCode = 511; freeEnt = 258; clearFlag = false
+
+                  output(clearCode)
+                  var ent = indexed[0].toInt() and 0xFF
+                  for (i in 1 until indexed.size) {
+                      val c = indexed[i].toInt() and 0xFF
+                      val key = (c shl 12) or ent
+                      val code = table[key]
+                      if (code != null) {
+                          ent = code
+                          continue
+                      }
+                      output(ent)
+                      ent = c
+                      if (freeEnt < maxMaxCode) {
+                          table[key] = freeEnt++
+                      } else {
+                          table.clear()
+                          freeEnt = clearCode + 2
+                          clearFlag = true
+                          output(clearCode)
+                      }
+                  }
+                  output(ent)
+                  output(eofCode)
+                  // تفريغ ما تبقى
+                  while (curBits > 0) {
+                      addByte(curAccum and 0xFF)
+                      curAccum = curAccum ushr 8
+                      curBits -= 8
+                  }
+                  flushBlock()
+                  out.write(0)  // نهاية بيانات الصورة
+              }
+
+              private fun output(code: Int) {
+                  curAccum = curAccum or (code shl curBits)
+                  curBits += nBits
+                  while (curBits >= 8) {
+                      addByte(curAccum and 0xFF)
+                      curAccum = curAccum ushr 8
+                      curBits -= 8
+                  }
+                  if (freeEnt > maxCode || clearFlag) {
+                      if (clearFlag) {
+                          nBits = 9
+                          maxCode = 511
+                          clearFlag = false
+                      } else {
+                          nBits++
+                          maxCode = if (nBits == 12) 4096 else (1 shl nBits) - 1
+                      }
+                  }
+              }
+
+              private fun addByte(b: Int) {
+                  block[blockLen++] = b.toByte()
+                  if (blockLen >= 254) flushBlock()
+              }
+
+              private fun flushBlock() {
+                  if (blockLen > 0) {
+                      out.write(blockLen)
+                      out.write(block, 0, blockLen)
+                      blockLen = 0
+                  }
+              }
+          }
+          EOF_VC
+          mkdir -p app/src/main/java/com/omar/videotoolkit
+          cat > app/src/main/java/com/omar/videotoolkit/MainActivity.kt <<'EOF_VC'
+          package com.omar.videotoolkit
+
+          import android.content.Intent
+          import android.graphics.Color
+          import android.graphics.drawable.GradientDrawable
+          import android.os.Bundle
+          import android.view.Gravity
+          import android.view.View
+          import android.widget.FrameLayout
+          import android.widget.ImageView
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import androidx.appcompat.app.AppCompatActivity
+          import com.google.android.material.dialog.MaterialAlertDialogBuilder
+
+          class MainActivity : AppCompatActivity() {
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  Lang.load(this)
+                  buildUi()
+              }
+
+              private fun open(tool: Tool) {
+                  startActivity(Intent(this, ToolActivity::class.java).putExtra("tool", tool.name))
+              }
+
+              private fun buildUi() {
+                  val frame = FrameLayout(this).apply {
+                      setBackgroundColor(C.BG)
+                      layoutDirection = Lang.dir
+                  }
+                  val scroll = ScrollView(this)
+                  val root = vbox().apply { setPadding(dp(18), dp(14), dp(18), dp(110)) }
+                  scroll.addView(root)
+                  frame.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+
+                  // ---------- الترويسة
+                  val header = hbox()
+                  header.addView(ImageView(this).apply {
+                      setImageResource(R.drawable.ic_launcher)
+                      clipToOutline = true
+                      background = round(C.CARD, 14f)
+                  }, lp(w = dp(48), h = dp(48)))
+                  header.addView(vbox().apply {
+                      addView(label(tr("ضاغط الفيديو", "VIDEO"), 22f, C.TEXT, true))
+                      addView(label(tr("PRO • أدوات الفيديو", "COMPRESSOR PRO"), 13f, C.CYAN, true))
+                  }, lp(w = 0, weight = 1f, start = 12))
+                  header.addView(label(if (Lang.ar) "EN" else "ع", 15f, C.TEXT, true).apply {
+                      gravity = Gravity.CENTER
+                      background = clickable(round(C.CARD2, 14f))
+                      setOnClickListener { Lang.set(this@MainActivity, !Lang.ar); recreate() }
+                  }, lp(w = dp(46), h = dp(46), end = 8))
+                  header.addView(label("📁", 20f).apply {
+                      gravity = Gravity.CENTER
+                      background = clickable(round(C.CARD2, 14f))
+                      setOnClickListener { startActivity(Intent(this@MainActivity, CreationsActivity::class.java)) }
+                  }, lp(w = dp(46), h = dp(46)))
+                  root.addView(header, lp())
+
+                  // ---------- الشريط الملوّن
+                  root.addView(View(this).apply {
+                      background = gradient(intArrayOf(C.CYAN, C.PURPLE, C.PINK, C.ORANGE), 4f,
+                          GradientDrawable.Orientation.LEFT_RIGHT)
+                  }, lp(h = dp(7), top = 16))
+
+                  // ---------- البطاقة المميزة
+                  val banner = FrameLayout(this).apply {
+                      background = clickable(GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                          intArrayOf(Color.parseColor("#1B2333"), Color.parseColor("#2A1838"))).apply {
+                          cornerRadius = dpf(20f)
+                          setStroke(dp(2), C.PURPLE)
+                      })
+                      isClickable = true
+                      setOnClickListener { open(Tool.TARGET) }
+                  }
+                  val bannerRow = hbox().apply { setPadding(dp(16), dp(18), dp(16), dp(18)) }
+                  bannerRow.addView(label("📲", 40f), lp(w = -2))
+                  bannerRow.addView(vbox().apply {
+                      addView(label(tr("صغّر الفيديو لحجم محدد", "Shrink to an exact size"), 13f, C.CYAN))
+                      addView(label(tr("جاهز للإرسال: واتساب • تيليجرام • Claude", "Ready for WhatsApp • Telegram • Claude"),
+                          17f, C.TEXT, true))
+                  }, lp(w = 0, weight = 1f, start = 12))
+                  banner.addView(bannerRow)
+                  banner.addView(label(tr("جديد", "NEW"), 12f, C.TEXT, true).apply {
+                      background = round(C.PINK, 8f)
+                      setPadding(dp(10), dp(3), dp(10), dp(3))
+                  }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(8), dp(10), 0) })
+                  root.addView(banner, lp(top = 18))
+
+                  // ---------- ثلاث بطاقات كبيرة
+                  val big = hbox()
+                  val bigTools = listOf(
+                      Tool.COMPRESS to intArrayOf(Color.parseColor("#FB7185"), Color.parseColor("#F59E0B")),
+                      Tool.AUDIO to intArrayOf(Color.parseColor("#4F46E5"), Color.parseColor("#C026D3")),
+                      Tool.CONVERT to intArrayOf(Color.parseColor("#8B5CF6"), Color.parseColor("#06B6D4")),
+                  )
+                  bigTools.forEachIndexed { i, (t, colors) ->
+                      big.addView(vbox(10).apply {
+                          gravity = Gravity.CENTER
+                          background = clickable(gradient(colors, 20f))
+                          isClickable = true
+                          setOnClickListener { open(t) }
+                          addView(label(t.emoji, 34f).apply { gravity = Gravity.CENTER }, lp())
+                          addView(label(t.title, 14f, C.TEXT, true).apply { gravity = Gravity.CENTER }, lp(top = 8))
+                      }, lp(w = 0, h = dp(132), weight = 1f, start = if (i == 0) 0 else 5, end = if (i == 2) 0 else 5))
+                  }
+                  root.addView(big, lp(top = 18))
+
+                  // ---------- أدوات GIF والصور
+                  root.addView(label(tr("أدوات GIF والصور", "GIF & Photo Tools"), 24f, C.TEXT, true), lp(top = 24, bottom = 12))
+                  val gifRow = hbox()
+                  listOf(Tool.GIF to Color.parseColor("#0EA5E9"), Tool.FRAME to Color.parseColor("#22C55E"))
+                      .forEachIndexed { i, (t, color) ->
+                          gifRow.addView(hbox().apply {
+                              setPadding(dp(12), dp(14), dp(12), dp(14))
+                              background = clickable(round(C.CARD2, 18f))
+                              isClickable = true
+                              setOnClickListener { open(t) }
+                              addView(label(t.emoji, 24f).apply {
+                                  gravity = Gravity.CENTER
+                                  background = round(color, 16f)
+                              }, lp(w = dp(54), h = dp(54)))
+                              addView(label(t.title, 16f, C.TEXT, true), lp(w = 0, weight = 1f, start = 10))
+                          }, lp(w = 0, weight = 1f, start = if (i == 0) 0 else 6, end = if (i == 0) 6 else 0))
+                      }
+                  root.addView(gifRow, lp())
+
+                  // ---------- أدوات الفيديو (شبكة)
+                  root.addView(label(tr("أدوات الفيديو", "Video Tools"), 24f, C.TEXT, true), lp(top = 26, bottom = 12))
+                  val grid = listOf(Tool.TRIM, Tool.CROP, Tool.SLOW, Tool.FAST, Tool.ROTATE, Tool.MUTE,
+                      Tool.LOOP, Tool.VOLUME, Tool.INFO)
+                  grid.chunked(3).forEach { rowTools ->
+                      val row = hbox()
+                      rowTools.forEach { t ->
+                          row.addView(vbox().apply {
+                              gravity = Gravity.CENTER_HORIZONTAL
+                              isClickable = true
+                              setOnClickListener { open(t) }
+                              addView(label(t.emoji, 30f).apply {
+                                  gravity = Gravity.CENTER
+                                  background = clickable(GradientDrawable().apply {
+                                      shape = GradientDrawable.OVAL
+                                      setColor(C.CARD)
+                                  })
+                              }, lp(w = dp(84), h = dp(84)))
+                              addView(label(t.title, 14f, C.TEXT).apply { gravity = Gravity.CENTER }, lp(top = 8))
+                          }, lp(w = 0, weight = 1f, bottom = 18))
+                      }
+                      root.addView(row, lp())
+                  }
+
+                  // ---------- الشريط السفلي
+                  val bottom = FrameLayout(this)
+                  val bar = hbox().apply {
+                      setBackgroundColor(Color.parseColor("#1A1C22"))
+                      setPadding(dp(20), dp(10), dp(20), dp(10))
+                  }
+                  bar.addView(navItem("⚙️", tr("الإعدادات", "Settings")) { showSettings() }, lp(w = 0, weight = 1f))
+                  bar.addView(View(this), lp(w = dp(80), h = 1))
+                  bar.addView(navItem("🎬", tr("إبداعاتي", "My Creations")) {
+                      startActivity(Intent(this, CreationsActivity::class.java))
+                  }, lp(w = 0, weight = 1f))
+                  bottom.addView(bar, FrameLayout.LayoutParams(-1, dp(72), Gravity.BOTTOM))
+                  bottom.addView(label("🗜️", 28f).apply {
+                      gravity = Gravity.CENTER
+                      background = clickable(GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                          intArrayOf(C.CYAN, Color.parseColor("#2563EB"))).apply { shape = GradientDrawable.OVAL })
+                      elevation = dpf(8f)
+                      setOnClickListener { open(Tool.COMPRESS) }
+                  }, FrameLayout.LayoutParams(dp(70), dp(70), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+                  frame.addView(bottom, FrameLayout.LayoutParams(-1, dp(100), Gravity.BOTTOM))
+
+                  setContentView(frame)
+              }
+
+              private fun navItem(icon: String, text: String, onClick: () -> Unit) = vbox().apply {
+                  gravity = Gravity.CENTER
+                  isClickable = true
+                  setOnClickListener { onClick() }
+                  addView(label(icon, 22f).apply { gravity = Gravity.CENTER }, lp())
+                  addView(label(text, 12f, C.SUB).apply { gravity = Gravity.CENTER }, lp())
+              }
+
+              private fun showSettings() {
+                  val langs = arrayOf("العربية", "English")
+                  MaterialAlertDialogBuilder(this)
+                      .setTitle(tr("الإعدادات • اللغة", "Settings • Language"))
+                      .setSingleChoiceItems(langs, if (Lang.ar) 0 else 1) { d, which ->
+                          d.dismiss()
+                          Lang.set(this, which == 0)
+                          recreate()
+                      }
+                      .setNeutralButton(tr("حول التطبيق", "About")) { _, _ ->
+                          MaterialAlertDialogBuilder(this)
+                              .setTitle(tr("ضاغط الفيديو Pro", "Video Compressor Pro"))
+                              .setMessage(tr(
+                                  "الإصدار 1.0\nيعمل بالكامل على هاتفك دون إنترنت ودون إعلانات.\nمبني بمكتبة AndroidX Media3.",
+                                  "Version 1.0\nRuns fully on your phone — offline, no ads.\nBuilt with AndroidX Media3."))
+                              .setPositiveButton("OK", null)
+                              .show()
+                      }
+                      .setPositiveButton(tr("إغلاق", "Close"), null)
+                      .show()
+              }
+          }
+          EOF_VC
+          mkdir -p app/src/main/java/com/omar/videotoolkit
+          cat > app/src/main/java/com/omar/videotoolkit/Media.kt <<'EOF_VC'
+          package com.omar.videotoolkit
+
+          import android.content.ContentValues
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Bitmap
+          import android.media.MediaExtractor
+          import android.media.MediaFormat
+          import android.media.MediaMetadataRetriever
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Environment
+          import android.provider.MediaStore
+          import android.provider.OpenableColumns
+          import androidx.core.content.FileProvider
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.io.File
+          import java.io.FileInputStream
+
+          /** معلومات الفيديو المختار */
+          data class VInfo(
+              val uri: Uri,
+              val name: String,
+              val size: Long,
+              val width: Int,          // بعد مراعاة الدوران
+              val height: Int,
+              val durationMs: Long,
+              val rotation: Int,
+              val hasAudio: Boolean,
+              val audioBitrate: Int,
+              val sampleRate: Int,
+              val channels: Int,
+              val videoMime: String?,
+              val audioMime: String?,
+              val fps: Float,
+          ) {
+              val durationSec get() = durationMs / 1000f
+              /** معدل البت الإجمالي (بت/ثانية) */
+              val totalBitrate get() = if (size > 0 && durationMs > 0) size * 8 * 1000 / durationMs else 0L
+              val shortSide get() = minOf(width, height)
+          }
+
+          object Media {
+
+              fun probe(ctx: Context, uri: Uri): VInfo {
+                  var name = "video.mp4"
+                  var size = -1L
+                  try {
+                      ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                          if (c.moveToFirst()) {
+                              val ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                              val si = c.getColumnIndex(OpenableColumns.SIZE)
+                              if (ni >= 0) name = c.getString(ni) ?: name
+                              if (si >= 0 && !c.isNull(si)) size = c.getLong(si)
+                          }
+                      }
+                  } catch (_: Exception) {}
+
+                  var w = 0; var h = 0; var rot = 0; var dur = 0L
+                  val mmr = MediaMetadataRetriever()
+                  try {
+                      mmr.setDataSource(ctx, uri)
+                      w = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                      h = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                      rot = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                      dur = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                  } catch (_: Exception) {
+                  } finally {
+                      try { mmr.release() } catch (_: Exception) {}
+                  }
+                  if (rot == 90 || rot == 270) { val t = w; w = h; h = t }
+
+                  var hasAudio = false; var aBit = 128_000; var sr = 0; var ch = 0
+                  var vMime: String? = null; var aMime: String? = null; var fps = 0f
+                  val ex = MediaExtractor()
+                  try {
+                      ex.setDataSource(ctx, uri, null)
+                      for (i in 0 until ex.trackCount) {
+                          val f = ex.getTrackFormat(i)
+                          val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
+                          if (mime.startsWith("audio/")) {
+                              hasAudio = true; aMime = mime
+                              if (f.containsKey(MediaFormat.KEY_BIT_RATE)) aBit = f.getInteger(MediaFormat.KEY_BIT_RATE)
+                              if (f.containsKey(MediaFormat.KEY_SAMPLE_RATE)) sr = f.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                              if (f.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) ch = f.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                          } else if (mime.startsWith("video/")) {
+                              vMime = mime
+                              if (f.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                                  fps = try { f.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat() }
+                                  catch (_: Exception) { try { f.getFloat(MediaFormat.KEY_FRAME_RATE) } catch (_: Exception) { 0f } }
+                              }
+                          }
+                      }
+                  } catch (_: Exception) {
+                  } finally {
+                      ex.release()
+                  }
+                  return VInfo(uri, name, size, w, h, dur, rot, hasAudio, aBit, sr, ch, vMime, aMime, fps)
+              }
+
+              fun frameAt(ctx: Context, uri: Uri, timeUs: Long, maxSide: Int = 0): Bitmap? {
+                  val mmr = MediaMetadataRetriever()
+                  return try {
+                      mmr.setDataSource(ctx, uri)
+                      val b = mmr.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return null
+                      if (maxSide > 0 && maxOf(b.width, b.height) > maxSide) {
+                          val s = maxSide.toFloat() / maxOf(b.width, b.height)
+                          Bitmap.createScaledBitmap(b, (b.width * s).toInt(), (b.height * s).toInt(), true)
+                      } else b
+                  } catch (_: Exception) {
+                      null
+                  } finally {
+                      try { mmr.release() } catch (_: Exception) {}
+                  }
+              }
+
+              /** نوع الملف الناتج */
+              enum class Kind(val mime: String, val relDir: String) {
+                  VIDEO("video/mp4", Environment.DIRECTORY_MOVIES),
+                  AUDIO("audio/mp4", Environment.DIRECTORY_MUSIC),
+                  GIF("image/gif", Environment.DIRECTORY_PICTURES),
+                  IMAGE("image/jpeg", Environment.DIRECTORY_PICTURES),
+              }
+
+              /** يحفظ الملف في المعرض/الذاكرة ويضيفه إلى "إبداعاتي" ويُرجع رابطاً قابلاً للمشاركة */
+              fun save(ctx: Context, file: File, kind: Kind): Uri {
+                  var uri: Uri? = null
+                  if (Build.VERSION.SDK_INT >= 29) {
+                      try {
+                          val collection = when (kind) {
+                              Kind.VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                              Kind.AUDIO -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                              else -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                          }
+                          val values = ContentValues().apply {
+                              put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                              put(MediaStore.MediaColumns.MIME_TYPE, kind.mime)
+                              put(MediaStore.MediaColumns.RELATIVE_PATH, kind.relDir + "/VideoToolkit")
+                              put(MediaStore.MediaColumns.IS_PENDING, 1)
+                          }
+                          val u = ctx.contentResolver.insert(collection, values)
+                          if (u != null) {
+                              ctx.contentResolver.openOutputStream(u)?.use { out ->
+                                  FileInputStream(file).use { it.copyTo(out) }
+                              }
+                              ctx.contentResolver.update(u, ContentValues().apply {
+                                  put(MediaStore.MediaColumns.IS_PENDING, 0)
+                              }, null, null)
+                              uri = u
+                          }
+                      } catch (_: Exception) {
+                          uri = null
+                      }
+                  }
+                  if (uri == null) {
+                      // أندرويد 9 وما قبله أو فشل الحفظ: نحتفظ بنسخة داخل مجلد التطبيق
+                      val dir = File(ctx.getExternalFilesDir(kind.relDir) ?: ctx.filesDir, "VideoToolkit").apply { mkdirs() }
+                      val dest = File(dir, file.name)
+                      file.copyTo(dest, overwrite = true)
+                      uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", dest)
+                  }
+                  Creations.add(ctx, uri!!, file.name, file.length(), kind)
+                  return uri!!
+              }
+
+              fun share(ctx: Context, uri: Uri, mime: String) {
+                  val send = Intent(Intent.ACTION_SEND).apply {
+                      type = mime
+                      putExtra(Intent.EXTRA_STREAM, uri)
+                      addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                  }
+                  ctx.startActivity(Intent.createChooser(send, tr("مشاركة عبر", "Share via")))
+              }
+
+              fun open(ctx: Context, uri: Uri, mime: String) {
+                  try {
+                      ctx.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                          setDataAndType(uri, mime)
+                          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                      })
+                  } catch (_: Exception) {
+                      share(ctx, uri, mime)
+                  }
+              }
+          }
+
+          /** سجل "إبداعاتي" */
+          object Creations {
+              data class Item(val uri: Uri, val name: String, val size: Long, val kind: Media.Kind, val time: Long)
+
+              private fun prefs(ctx: Context) = ctx.getSharedPreferences("creations", Context.MODE_PRIVATE)
+
+              fun all(ctx: Context): List<Item> {
+                  val arr = try { JSONArray(prefs(ctx).getString("items", "[]")) } catch (_: Exception) { JSONArray() }
+                  val list = mutableListOf<Item>()
+                  for (i in 0 until arr.length()) {
+                      val o = arr.getJSONObject(i)
+                      val kind = try { Media.Kind.valueOf(o.getString("kind")) } catch (_: Exception) { Media.Kind.VIDEO }
+                      list += Item(Uri.parse(o.getString("uri")), o.getString("name"), o.getLong("size"), kind, o.getLong("time"))
+                  }
+                  return list.sortedByDescending { it.time }
+              }
+
+              fun add(ctx: Context, uri: Uri, name: String, size: Long, kind: Media.Kind) {
+                  val arr = try { JSONArray(prefs(ctx).getString("items", "[]")) } catch (_: Exception) { JSONArray() }
+                  arr.put(JSONObject().apply {
+                      put("uri", uri.toString()); put("name", name); put("size", size)
+                      put("kind", kind.name); put("time", System.currentTimeMillis())
+                  })
+                  prefs(ctx).edit().putString("items", arr.toString()).apply()
+              }
+
+              fun remove(ctx: Context, item: Item) {
+                  val keep = JSONArray()
+                  all(ctx).filter { it.uri != item.uri }.forEach {
+                      keep.put(JSONObject().apply {
+                          put("uri", it.uri.toString()); put("name", it.name); put("size", it.size)
+                          put("kind", it.kind.name); put("time", it.time)
+                      })
+                  }
+                  prefs(ctx).edit().putString("items", keep.toString()).apply()
+              }
+          }
+          EOF_VC
+          mkdir -p app/src/main/java/com/omar/videotoolkit
+          cat > app/src/main/java/com/omar/videotoolkit/Tool.kt <<'EOF_VC'
+          package com.omar.videotoolkit
+
+          /** جميع أدوات التطبيق */
+          enum class Tool(val emoji: String, val ar: String, val en: String, val descAr: String, val descEn: String) {
+              COMPRESS("🗜️", "ضغط الفيديو", "Compress Video", "تصغير الحجم بأكثر من 50%", "Shrink size by 50%+"),
+              TARGET("🎯", "ضغط لحجم محدد", "Compress to Size", "واتساب 16MB، أو أي حجم تختاره", "WhatsApp 16MB or any size"),
+              CONVERT("🔄", "تحويل الترميز", "Convert Codec", "MP4 بترميز H.264 أو H.265", "MP4 as H.264 or H.265"),
+              AUDIO("🎵", "فيديو إلى صوت", "Video to Audio", "استخراج الصوت بصيغة M4A", "Extract audio as M4A"),
+              GIF("🎞️", "فيديو إلى GIF", "Video to GIF", "صورة متحركة من مقطع", "Animated GIF from a clip"),
+              FRAME("📸", "صورة من الفيديو", "Video to Photo", "التقاط لقطة بجودة كاملة", "Grab a full-quality frame"),
+              TRIM("✂️", "قص المدة", "Video Trim", "اختر البداية والنهاية", "Pick start and end"),
+              CROP("🔲", "اقتصاص", "Video Crop", "1:1، 9:16، 4:5، 16:9", "1:1, 9:16, 4:5, 16:9"),
+              SLOW("🐢", "تبطيء", "Slow Motion", "حتى 0.25×", "Down to 0.25×"),
+              FAST("⚡", "تسريع", "Fast Motion", "حتى 4×", "Up to 4×"),
+              ROTATE("🔃", "تدوير وقلب", "Flip & Rotate", "90°، 180°، قلب أفقي/عمودي", "90°, 180°, mirror"),
+              MUTE("🔇", "كتم الصوت", "Mute Video", "إزالة الصوت بالكامل", "Remove the audio"),
+              LOOP("🔁", "تكرار الفيديو", "Video Looper", "كرّر المقطع حتى 10 مرات", "Repeat up to 10×"),
+              VOLUME("🔊", "مستوى الصوت", "Video Volume", "خفض أو رفع حتى 300%", "Lower or boost to 300%"),
+              INFO("ℹ️", "معلومات الفيديو", "Video Info", "الدقة، الترميز، معدل البت…", "Resolution, codec, bitrate…");
+
+              val title get() = tr(ar, en)
+              val desc get() = tr(descAr, descEn)
+          }
+          EOF_VC
+          mkdir -p app/src/main/java/com/omar/videotoolkit
+          cat > app/src/main/java/com/omar/videotoolkit/ToolActivity.kt <<'EOF_VC'
+          package com.omar.videotoolkit
+
+          import android.content.Intent
+          import android.content.res.ColorStateList
+          import android.graphics.Bitmap
+          import android.graphics.Color
+          import android.graphics.Outline
+          import android.graphics.drawable.GradientDrawable
+          import android.media.MediaMetadataRetriever
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.view.ViewOutlineProvider
+          import android.widget.FrameLayout
+          import android.widget.ImageView
+          import android.widget.LinearLayout
+          import android.widget.ProgressBar
+          import android.widget.ScrollView
+          import android.widget.TextView
+          import androidx.activity.OnBackPressedCallback
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.annotation.OptIn
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.media3.common.Effect
+          import androidx.media3.common.MediaItem
+          import androidx.media3.common.MimeTypes
+          import androidx.media3.common.audio.AudioProcessor
+          import androidx.media3.common.audio.ChannelMixingAudioProcessor
+          import androidx.media3.common.audio.ChannelMixingMatrix
+          import androidx.media3.common.audio.SonicAudioProcessor
+          import androidx.media3.common.util.UnstableApi
+          import androidx.media3.effect.Crop
+          import androidx.media3.effect.Presentation
+          import androidx.media3.effect.ScaleAndRotateTransformation
+          import androidx.media3.effect.SpeedChangeEffect
+          import androidx.media3.transformer.EditedMediaItem
+          import androidx.media3.transformer.Effects
+          import com.google.android.material.chip.Chip
+          import com.google.android.material.chip.ChipGroup
+          import com.google.android.material.materialswitch.MaterialSwitch
+          import com.google.android.material.slider.RangeSlider
+          import com.google.android.material.slider.Slider
+          import java.io.File
+          import java.io.FileOutputStream
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+          import kotlin.math.max
+          import kotlin.math.min
+          import kotlin.math.roundToInt
+
+          @OptIn(UnstableApi::class)
+          class ToolActivity : AppCompatActivity() {
+
+              private lateinit var tool: Tool
+              private var info: VInfo? = null
+
+              private lateinit var pickCard: LinearLayout
+              private lateinit var preview: FrameLayout
+              private lateinit var thumb: ImageView
+              private lateinit var overlay: TextView
+              private lateinit var nameView: TextView
+              private lateinit var options: LinearLayout
+              private lateinit var actionBtn: TextView
+              private lateinit var progress: ProgressBar
+              private lateinit var status: TextView
+              private lateinit var result: LinearLayout
+
+              private val exporter by lazy { Exporter(this) }
+              private var busy = false
+
+              // ---- حالة الخيارات
+              private var preset = 1            // 0 صغير، 1 متوسط، 2 كبير، 3 مخصص
+              private var customScale = 75
+              private var targetMb = 16
+              private var hevc = false
+              private var quality = 0
+              private var audioKbps = 128
+              private var rangeStart = 0f
+              private var rangeEnd = 0f
+              private var gifWidth = 320
+              private var gifFps = 10
+              private var frameSec = 0f
+              private var cropIndex = 0
+              private var speed = 2f
+              private var keepAudio = true
+              private var rotation = 90
+              private var flipH = false
+              private var flipV = false
+              private var loops = 2
+              private var volume = 150
+
+              // ---- حالة الضغط المتكرر
+              private var attempt = 0
+              private var curVideoBitrate = 0
+              private var curAudioBitrate = 0
+              private var curShort = 0
+              private var targetBytes = 0L
+
+              private val presetCards = mutableListOf<LinearLayout>()
+
+              private val picker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                  if (uri != null) onPicked(uri)
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  Lang.load(this)
+                  tool = try { Tool.valueOf(intent.getStringExtra("tool") ?: "COMPRESS") } catch (_: Exception) { Tool.COMPRESS }
+                  if (tool == Tool.SLOW) speed = 0.5f
+                  buildUi()
+
+                  exporter.onProgress = { p ->
+                      progress.isIndeterminate = false
+                      progress.progress = p
+                      status.text = progressText(p)
+                  }
+                  exporter.onDone = { f -> onExportDone(f) }
+                  exporter.onError = { msg -> fail(msg) }
+
+                  onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+                      override fun handleOnBackPressed() {
+                          if (busy) exporter.cancel()
+                          finish()
+                      }
+                  })
+
+                  if (intent?.action == Intent.ACTION_SEND) {
+                      @Suppress("DEPRECATION")
+                      val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                      if (uri != null) onPicked(uri)
+                  }
+              }
+
+              override fun onDestroy() {
+                  if (busy) exporter.cancel()
+                  super.onDestroy()
+              }
+
+              // =================================================================== الواجهة
+
+              private fun buildUi() {
+                  val scroll = ScrollView(this).apply {
+                      setBackgroundColor(C.BG)
+                      isFillViewport = true
+                  }
+                  val root = vbox(18).apply { layoutDirection = Lang.dir }
+                  scroll.addView(root)
+
+                  // شريط علوي
+                  val top = hbox()
+                  val back = label(if (Lang.ar) "→" else "←", 26f, C.TEXT, true).apply {
+                      setPadding(dp(4), 0, dp(14), 0)
+                      setOnClickListener { onBackPressedDispatcher.onBackPressed() }
+                  }
+                  top.addView(back)
+                  top.addView(vbox().apply {
+                      addView(label(tool.emoji + "  " + tool.title, 22f, C.TEXT, true))
+                      addView(label(tool.desc, 13f, C.SUB))
+                  })
+                  root.addView(top, lp(bottom = 18))
+
+                  // بطاقة الاختيار
+                  pickCard = vbox(26).apply {
+                      gravity = Gravity.CENTER
+                      background = clickable(GradientDrawable().apply {
+                          setColor(C.CARD)
+                          cornerRadius = dpf(22f)
+                          setStroke(dp(2), C.CYAN, dpf(10f), dpf(8f))
+                      })
+                      isClickable = true
+                      setOnClickListener { picker.launch("video/*") }
+                      addView(label("🎬", 46f).apply { gravity = Gravity.CENTER }, lp())
+                      addView(label(tr("اضغط لاختيار فيديو", "Tap to choose a video"), 18f, C.TEXT, true)
+                          .apply { gravity = Gravity.CENTER }, lp(top = 8))
+                      addView(label(tr("من المعرض أو الملفات", "From gallery or files"), 13f, C.SUB)
+                          .apply { gravity = Gravity.CENTER }, lp(top = 2))
+                  }
+                  root.addView(pickCard, lp(h = dp(200)))
+
+                  // المعاينة
+                  preview = FrameLayout(this).apply {
+                      visibility = View.GONE
+                      background = round(C.CARD, 22f)
+                      clipToOutline = true
+                      outlineProvider = object : ViewOutlineProvider() {
+                          override fun getOutline(view: View, outline: Outline) {
+                              outline.setRoundRect(0, 0, view.width, view.height, dpf(22f))
+                          }
+                      }
+                      setOnClickListener { if (!busy) picker.launch("video/*") }
+                  }
+                  thumb = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+                  preview.addView(thumb, FrameLayout.LayoutParams(-1, -1))
+                  preview.addView(View(this).apply {
+                      background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                          intArrayOf(Color.parseColor("#99000000"), Color.TRANSPARENT, Color.parseColor("#AA000000")))
+                  }, FrameLayout.LayoutParams(-1, -1))
+                  overlay = label("", 14f, C.TEXT, true).apply { setPadding(dp(14), dp(12), dp(14), 0) }
+                  preview.addView(overlay, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+                  nameView = label("", 14f, C.TEXT, true).apply {
+                      setPadding(dp(14), 0, dp(14), dp(12)); maxLines = 1
+                  }
+                  preview.addView(nameView, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+                  preview.addView(label(tr("تغيير ↻", "Change ↻"), 12f, C.TEXT, true).apply {
+                      background = round(Color.parseColor("#66000000"), 12f)
+                      setPadding(dp(10), dp(5), dp(10), dp(5))
+                  }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
+                      setMargins(dp(10), dp(10), dp(10), dp(10))
+                  })
+                  root.addView(preview, lp(h = dp(210)))
+
+                  options = vbox()
+                  root.addView(options, lp(top = 6))
+
+                  actionBtn = primaryButton(actionText()) { process() }
+                  actionBtn.visibility = View.GONE
+                  root.addView(actionBtn, lp(top = 20))
+
+                  progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                      max = 100
+                      visibility = View.GONE
+                      progressTintList = ColorStateList.valueOf(C.CYAN)
+                  }
+                  root.addView(progress, lp(top = 16))
+                  status = label("", 15f, C.CYAN).apply { gravity = Gravity.CENTER }
+                  root.addView(status, lp(top = 8))
+
+                  result = vbox(16).apply {
+                      visibility = View.GONE
+                      background = round(C.CARD, 20f, 1, Color.parseColor("#3322D3EE"))
+                  }
+                  root.addView(result, lp(top = 14, bottom = 30))
+
+                  setContentView(scroll)
+              }
+
+              private fun actionText() = when (tool) {
+                  Tool.COMPRESS, Tool.TARGET -> tr("ابدأ الضغط  ›", "Compress  ›")
+                  Tool.AUDIO -> tr("استخراج الصوت  ›", "Extract Audio  ›")
+                  Tool.GIF -> tr("إنشاء GIF  ›", "Create GIF  ›")
+                  Tool.FRAME -> tr("التقاط الصورة  ›", "Save Photo  ›")
+                  Tool.CONVERT -> tr("تحويل  ›", "Convert  ›")
+                  else -> tr("حفظ  ›", "Save  ›")
+              }
+
+              private fun progressText(p: Int) = tr("جارٍ المعالجة… ", "Processing… ") + "$p%" +
+                      if (attempt > 1) tr("\n(محاولة $attempt بإعدادات أقوى)", "\n(attempt $attempt, stronger settings)") else ""
+
+              private fun section(text: String) = label(text, 16f, C.TEXT, true).also { options.addView(it, lp(top = 18, bottom = 8)) }
+
+              private fun note(text: String) = label(text, 13f, C.SUB).also { options.addView(it, lp(top = 8)) }
+
+              private fun chips(labels: List<String>, selected: Int, onSelect: (Int) -> Unit): ChipGroup {
+                  val group = ChipGroup(this).apply {
+                      isSingleSelection = true
+                      isSelectionRequired = true
+                  }
+                  val bg = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(C.CYAN, C.CARD2))
+                  val fg = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(C.DARK_TEXT, C.TEXT))
+                  val ids = labels.map { s ->
+                      val chip = Chip(this).apply {
+                          id = View.generateViewId()
+                          text = s
+                          isCheckable = true
+                          isCheckedIconVisible = false
+                          chipBackgroundColor = bg
+                          setTextColor(fg)
+                          chipStrokeWidth = 0f
+                      }
+                      group.addView(chip)
+                      chip.id
+                  }
+                  group.check(ids[selected.coerceIn(0, ids.size - 1)])
+                  group.setOnCheckedStateChangeListener { _, checked ->
+                      val i = ids.indexOf(checked.firstOrNull() ?: -1)
+                      if (i >= 0) onSelect(i)
+                  }
+                  options.addView(group, lp())
+                  return group
+              }
+
+              private fun slider(from: Float, to: Float, step: Float, value: Float, fmt: (Float) -> String,
+                                 onChange: (Float) -> Unit): Slider {
+                  val s = Slider(this).apply {
+                      valueFrom = from
+                      valueTo = to
+                      stepSize = step
+                      this.value = value.coerceIn(from, to)
+                      setLabelFormatter { v -> fmt(v) }
+                      trackActiveTintList = ColorStateList.valueOf(C.CYAN)
+                      thumbTintList = ColorStateList.valueOf(C.CYAN)
+                      addOnChangeListener { _, v, _ -> onChange(v) }
+                  }
+                  options.addView(s, lp())
+                  return s
+              }
+
+              private fun switch(text: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+                  val sw = MaterialSwitch(this).apply {
+                      this.text = text
+                      textSize = 15f
+                      setTextColor(C.TEXT)
+                      isChecked = checked
+                      setOnCheckedChangeListener { _, b -> onChange(b) }
+                  }
+                  options.addView(sw, lp(top = 6))
+              }
+
+              /** نطاق زمني (بداية/نهاية) مع عرض الأوقات */
+              private fun rangeSelector(v: VInfo, maxSpan: Float = 0f) {
+                  val dur = max(v.durationSec, 0.5f)
+                  rangeStart = 0f
+                  rangeEnd = if (maxSpan > 0f) min(dur, maxSpan) else dur
+                  val times = label("", 15f, C.CYAN, true).apply { gravity = Gravity.CENTER }
+                  fun refresh() {
+                      times.text = tr("البداية ", "Start ") + formatTime(rangeStart) + "     " +
+                              tr("النهاية ", "End ") + formatTime(rangeEnd) + "     " +
+                              tr("المدة ", "Length ") + formatTime(rangeEnd - rangeStart)
+                  }
+                  val rs = RangeSlider(this).apply {
+                      valueFrom = 0f
+                      valueTo = dur
+                      values = listOf(rangeStart, rangeEnd)
+                      setLabelFormatter { formatTime(it) }
+                      trackActiveTintList = ColorStateList.valueOf(C.CYAN)
+                      thumbTintList = ColorStateList.valueOf(C.CYAN)
+                      addOnChangeListener { s, _, _ ->
+                          rangeStart = s.values[0]
+                          rangeEnd = s.values[1]
+                          refresh()
+                      }
+                  }
+                  options.addView(rs, lp())
+                  options.addView(times, lp(top = 2))
+                  refresh()
+              }
+
+              private fun optionCard(title: String, sub: String, index: Int): LinearLayout {
+                  val card = vbox(14).apply {
+                      isClickable = true
+                      addView(label(title, 16f, C.TEXT, true))
+                      addView(label(sub, 13f, C.SUB), lp(top = 2))
+                      setOnClickListener {
+                          preset = index
+                          stylePresetCards()
+                      }
+                  }
+                  presetCards += card
+                  options.addView(card, lp(bottom = 10))
+                  return card
+              }
+
+              private fun stylePresetCards() {
+                  presetCards.forEachIndexed { i, c ->
+                      c.background = clickable(if (i == preset) round(C.CARD, 16f, 2, C.CYAN) else round(C.CARD, 16f))
+                  }
+              }
+
+              private fun resText(v: VInfo, scale: Double): String {
+                  val w = ((v.width * scale).toInt() / 2) * 2
+                  val h = ((v.height * scale).toInt() / 2) * 2
+                  return "${w}×${h}"
+              }
+
+              // =================================================================== اختيار الفيديو
+
+              private fun onPicked(uri: Uri) {
+                  if (busy) return
+                  result.visibility = View.GONE
+                  status.text = tr("جارٍ قراءة الفيديو…", "Reading video…")
+                  Thread {
+                      val v = Media.probe(this, uri)
+                      val bmp = Media.frameAt(this, uri, min(1_000_000L, v.durationMs * 500), 720)
+                      runOnUiThread {
+                          info = v
+                          status.text = ""
+                          pickCard.visibility = View.GONE
+                          preview.visibility = View.VISIBLE
+                          if (bmp != null) thumb.setImageBitmap(bmp) else thumb.setImageDrawable(null)
+                          overlay.text = formatSize(v.size) + tr(" (الأصل)", " (original)") + "\n" +
+                                  "${v.width}×${v.height}  •  " + formatTime(v.durationSec)
+                          nameView.text = v.name
+                          buildOptions(v)
+                      }
+                  }.start()
+              }
+
+              private fun buildOptions(v: VInfo) {
+                  options.removeAllViews()
+                  presetCards.clear()
+                  actionBtn.visibility = View.VISIBLE
+                  actionBtn.text = actionText()
+                  when (tool) {
+                      Tool.COMPRESS -> {
+                          section(tr("اختر حجم الملف", "Choose output size"))
+                          optionCard(tr("ملف صغير (ضغط ~80%)", "Small file (~80% smaller)"),
+                              tr("دقة منخفضة ", "Low resolution ") + "(${resText(v, 0.5)})", 0)
+                          optionCard(tr("ملف متوسط (ضغط ~65%)", "Medium file (~65% smaller)"),
+                              tr("دقة متوسطة ", "Medium resolution ") + "(${resText(v, 0.75)})", 1)
+                          optionCard(tr("ملف كبير (ضغط ~50%)", "Large file (~50% smaller)"),
+                              tr("الدقة الأصلية ", "Original resolution ") + "(${resText(v, 1.0)})", 2)
+                          optionCard(tr("دقة مخصصة", "Custom resolution"),
+                              tr("اختر نسبة الدقة بالشريط أدناه", "Pick the resolution with the slider"), 3)
+                          stylePresetCards()
+                          val resLabel = label("", 14f, C.CYAN, true)
+                          fun refresh() {
+                              resLabel.text = tr("الدقة: ", "Resolution: ") + resText(v, customScale / 100.0) + "   $customScale%"
+                          }
+                          options.addView(resLabel, lp(top = 4))
+                          slider(25f, 100f, 5f, customScale.toFloat(), { "${it.toInt()}%" }) {
+                              customScale = it.toInt(); preset = 3; stylePresetCards(); refresh()
+                          }
+                          refresh()
+                          switch(tr("ترميز H.265 (حجم أصغر بنحو 30%)", "H.265 codec (~30% smaller)"), hevc) { hevc = it }
+                          note(tr("يحسب التطبيق معدل البت من حجم الفيديو الأصلي، ويعيد الضغط تلقائياً إذا لم يبلغ الهدف.",
+                              "Bitrate is computed from the original size; it retries automatically if the target isn't reached."))
+                      }
+                      Tool.TARGET -> {
+                          section(tr("الحجم المطلوب", "Target size"))
+                          val sizes = listOf(8, 16, 25, 50, 100)
+                          val labels = sizes.map { if (it == 16) tr("16MB (واتساب)", "16MB (WhatsApp)") else "${it}MB" }
+                          chips(labels, sizes.indexOf(targetMb).coerceAtLeast(0)) { targetMb = sizes[it] }
+                          switch(tr("ترميز H.265 (جودة أفضل لنفس الحجم)", "H.265 codec (better quality per MB)"), hevc) { hevc = it }
+                          note(tr("الحجم الحالي: ", "Current size: ") + formatSize(v.size))
+                      }
+                      Tool.CONVERT -> {
+                          section(tr("الترميز", "Codec"))
+                          chips(listOf(tr("H.264 (متوافق مع الكل)", "H.264 (most compatible)"),
+                              tr("H.265 / HEVC (أصغر)", "H.265 / HEVC (smaller)")), if (hevc) 1 else 0) { hevc = it == 1 }
+                          section(tr("الجودة", "Quality"))
+                          chips(listOf(tr("عالية", "High"), tr("متوسطة", "Medium")), quality) { quality = it }
+                          note(tr("الصيغة الناتجة MP4. صيغ AVI وMKV وFLV تحتاج مكتبة FFmpeg غير مدعومة في هذا الإصدار.",
+                              "Output is MP4. AVI/MKV/FLV need FFmpeg, which this version doesn't include."))
+                      }
+                      Tool.AUDIO -> {
+                          if (!v.hasAudio) note(tr("⚠️ هذا الفيديو لا يحتوي على صوت.", "⚠️ This video has no audio track."))
+                          section(tr("جودة الصوت", "Bitrate"))
+                          val rates = listOf(64, 96, 128, 192, 256)
+                          chips(rates.map { "${it}kb/s" }, rates.indexOf(audioKbps)) { audioKbps = rates[it] }
+                          note(tr("الصيغة الناتجة M4A (AAC) وتعمل في كل المشغلات. ترميز MP3 غير متوفر في أندرويد دون مكتبات إضافية.",
+                              "Output is M4A (AAC), playable everywhere. MP3 encoding isn't built into Android."))
+                      }
+                      Tool.GIF -> {
+                          section(tr("اختر المقطع (حتى 15 ثانية)", "Pick the clip (up to 15 s)"))
+                          rangeSelector(v, 5f)
+                          section(tr("العرض", "Width"))
+                          val widths = listOf(240, 320, 480)
+                          chips(widths.map { "${it}px" }, widths.indexOf(gifWidth)) { gifWidth = widths[it] }
+                          section(tr("الإطارات في الثانية", "Frames per second"))
+                          val fpsList = listOf(8, 10, 15)
+                          chips(fpsList.map { "$it fps" }, fpsList.indexOf(gifFps)) { gifFps = fpsList[it] }
+                      }
+                      Tool.FRAME -> {
+                          section(tr("اختر اللحظة", "Pick the moment"))
+                          val dur = max(v.durationSec, 0.5f)
+                          val t = label(formatTime(0f), 15f, C.CYAN, true).apply { gravity = Gravity.CENTER }
+                          val s = slider(0f, dur, 0f, 0f, { formatTime(it) }) { frameSec = it; t.text = formatTime(it) }
+                          s.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                              override fun onStartTrackingTouch(slider: Slider) {}
+                              override fun onStopTrackingTouch(slider: Slider) { updateThumb((frameSec * 1_000_000).toLong()) }
+                          })
+                          options.addView(t, lp())
+                      }
+                      Tool.TRIM -> {
+                          section(tr("حدّد البداية والنهاية", "Set start and end"))
+                          rangeSelector(v)
+                      }
+                      Tool.CROP -> {
+                          section(tr("نسبة الأبعاد", "Aspect ratio"))
+                          chips(listOf("1:1", "4:5", "9:16", "16:9", "4:3", "3:4"), cropIndex) { cropIndex = it }
+                          note(tr("يُقتص الفيديو من المنتصف. مثالي لإنستغرام وتيك توك ويوتيوب شورتس.",
+                              "Center crop — great for Instagram, TikTok and Shorts."))
+                      }
+                      Tool.SLOW, Tool.FAST -> {
+                          section(tr("السرعة", "Speed"))
+                          val list = if (tool == Tool.SLOW) listOf(0.25f, 0.5f, 0.75f) else listOf(1.5f, 2f, 3f, 4f)
+                          chips(list.map { "${trimZero(it)}×" }, list.indexOf(speed).coerceAtLeast(0)) { speed = list[it] }
+                          chips(listOf(tr("مع الصوت", "With audio"), tr("بدون صوت", "Without audio")), if (keepAudio) 0 else 1) {
+                              keepAudio = it == 0
+                          }
+                      }
+                      Tool.ROTATE -> {
+                          section(tr("التدوير", "Rotation"))
+                          val rots = listOf(0, 90, 180, 270)
+                          chips(rots.map { if (it == 0) tr("بدون", "None") else "$it°" }, rots.indexOf(rotation)) { rotation = rots[it] }
+                          section(tr("القلب", "Flip"))
+                          switch(tr("قلب أفقي (مرآة)", "Flip horizontally (mirror)"), flipH) { flipH = it }
+                          switch(tr("قلب عمودي", "Flip vertically"), flipV) { flipV = it }
+                      }
+                      Tool.MUTE -> {
+                          note(tr("سيُحذف الصوت بالكامل دون إعادة ترميز الصورة، فتبقى الجودة كما هي.",
+                              "Audio is removed without re-encoding the picture, so quality stays the same."))
+                      }
+                      Tool.LOOP -> {
+                          section(tr("عدد مرات التكرار", "Number of loops"))
+                          val l = label("", 15f, C.CYAN, true)
+                          fun refresh() { l.text = "$loops× = " + formatTime(v.durationSec * loops) }
+                          options.addView(l, lp())
+                          slider(2f, 10f, 1f, loops.toFloat(), { "${it.toInt()}×" }) { loops = it.toInt(); refresh() }
+                          refresh()
+                      }
+                      Tool.VOLUME -> {
+                          if (!v.hasAudio) note(tr("⚠️ هذا الفيديو لا يحتوي على صوت.", "⚠️ This video has no audio track."))
+                          section(tr("مستوى الصوت", "Volume"))
+                          val l = label("", 15f, C.CYAN, true)
+                          fun refresh() { l.text = "$volume%" }
+                          options.addView(l, lp())
+                          slider(0f, 300f, 10f, volume.toFloat(), { "${it.toInt()}%" }) { volume = it.toInt(); refresh() }
+                          refresh()
+                          note(tr("فوق 200% قد يظهر تشويش في الأصوات العالية.", "Above 200% loud parts may distort."))
+                      }
+                      Tool.INFO -> {
+                          actionBtn.visibility = View.GONE
+                          showInfo(v)
+                      }
+                  }
+              }
+
+              private fun trimZero(f: Float) = if (f == f.toInt().toFloat()) f.toInt().toString() else f.toString()
+
+              private fun updateThumb(us: Long) {
+                  val v = info ?: return
+                  Thread {
+                      val b = Media.frameAt(this, v.uri, us, 720)
+                      runOnUiThread { if (b != null) thumb.setImageBitmap(b) }
+                  }.start()
+              }
+
+              private fun showInfo(v: VInfo) {
+                  val rows = listOf(
+                      tr("الاسم", "Name") to v.name,
+                      tr("الحجم", "Size") to formatSize(v.size),
+                      tr("الدقة", "Resolution") to "${v.width}×${v.height}",
+                      tr("المدة", "Duration") to formatTime(v.durationSec),
+                      tr("معدل البت", "Bitrate") to "${v.totalBitrate / 1000} kbps",
+                      tr("الإطارات/ث", "Frame rate") to if (v.fps > 0) "${v.fps.roundToInt()} fps" else "—",
+                      tr("ترميز الفيديو", "Video codec") to (v.videoMime ?: "—"),
+                      tr("الدوران", "Rotation") to "${v.rotation}°",
+                      tr("ترميز الصوت", "Audio codec") to (v.audioMime ?: tr("لا يوجد", "none")),
+                      tr("الصوت", "Audio") to if (v.hasAudio) "${v.sampleRate} Hz • ${v.channels}ch • ${v.audioBitrate / 1000} kbps" else "—",
+                  )
+                  val card = vbox(14).apply { background = round(C.CARD, 18f) }
+                  rows.forEach { (k, value) ->
+                      val r = hbox()
+                      r.addView(label(k, 14f, C.SUB), lp(w = 0, weight = 1f))
+                      r.addView(label(value, 14f, C.TEXT, true).apply { gravity = Gravity.END }, lp(w = 0, weight = 1.6f))
+                      card.addView(r, lp(bottom = 10))
+                  }
+                  options.addView(card, lp(top = 12))
+              }
+
+              // =================================================================== المعالجة
+
+              private fun process() {
+                  val v = info ?: run { picker.launch("video/*"); return }
+                  if (busy) return
+                  result.visibility = View.GONE
+                  attempt = 0
+                  when (tool) {
+                      Tool.COMPRESS, Tool.TARGET -> startCompress(v)
+                      Tool.GIF -> makeGif(v)
+                      Tool.FRAME -> grabFrame(v)
+                      Tool.INFO -> {}
+                      else -> startSimple(v)
+                  }
+              }
+
+              private fun setBusy(b: Boolean) {
+                  busy = b
+                  actionBtn.isEnabled = !b
+                  actionBtn.alpha = if (b) 0.5f else 1f
+                  progress.visibility = if (b) View.VISIBLE else View.GONE
+                  if (b) {
+                      progress.isIndeterminate = true
+                      status.text = progressText(0)
+                  }
+              }
+
+              private fun outFile(ext: String): File {
+                  val dir = File(cacheDir, "out").apply { mkdirs() }
+                  dir.listFiles()?.forEach { if (System.currentTimeMillis() - it.lastModified() > 60_000) it.delete() }
+                  val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                  return File(dir, "VT_${tool.name.lowercase(Locale.US)}_$stamp.$ext")
+              }
+
+              private fun mediaItem(v: VInfo, startMs: Long = -1, endMs: Long = -1): MediaItem {
+                  val b = MediaItem.Builder().setUri(v.uri)
+                  if (startMs >= 0 && endMs > startMs) {
+                      b.setClippingConfiguration(
+                          MediaItem.ClippingConfiguration.Builder()
+                              .setStartPositionMs(startMs)
+                              .setEndPositionMs(endMs)
+                              .build()
+                      )
+                  }
+                  return b.build()
+              }
+
+              private fun sourceVideoBitrate(v: VInfo): Int {
+                  val audio = if (v.hasAudio) v.audioBitrate else 0
+                  return (v.totalBitrate - audio).toInt().coerceAtLeast(300_000)
+              }
+
+              /** الأدوات البسيطة: تحويل، صوت، قص، اقتصاص، سرعة، تدوير، كتم، تكرار، مستوى الصوت */
+              private fun startSimple(v: VInfo) {
+                  val videoFx = mutableListOf<Effect>()
+                  val audioFx = mutableListOf<AudioProcessor>()
+                  var removeAudio = false
+                  var removeVideo = false
+                  var startMs = -1L
+                  var endMs = -1L
+                  var repeat = 1
+                  var videoMime: String? = MimeTypes.VIDEO_H264
+                  var vBitrate = sourceVideoBitrate(v)
+                  var aBitrate = 0
+                  var ext = "mp4"
+
+                  when (tool) {
+                      Tool.CONVERT -> {
+                          videoMime = if (hevc) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264
+                          val q = if (quality == 0) 0.9 else 0.55
+                          vBitrate = (vBitrate * q * (if (hevc) 0.7 else 1.0)).toInt()
+                      }
+                      Tool.AUDIO -> {
+                          if (!v.hasAudio) { fail(tr("هذا الفيديو لا يحتوي على صوت.", "This video has no audio.")); return }
+                          removeVideo = true; videoMime = null; vBitrate = 0
+                          aBitrate = audioKbps * 1000; ext = "m4a"
+                      }
+                      Tool.TRIM -> {
+                          startMs = (rangeStart * 1000).toLong(); endMs = (rangeEnd * 1000).toLong()
+                          videoMime = null
+                      }
+                      Tool.CROP -> {
+                          val ratios = listOf(1f, 4f / 5f, 9f / 16f, 16f / 9f, 4f / 3f, 3f / 4f)
+                          val target = ratios[cropIndex]
+                          val input = if (v.height > 0) v.width.toFloat() / v.height else 1f
+                          val crop = if (input > target) {
+                              val half = target / input
+                              Crop(-half, half, -1f, 1f)
+                          } else {
+                              val half = input / target
+                              Crop(-1f, 1f, -half, half)
+                          }
+                          videoFx += crop
+                      }
+                      Tool.SLOW, Tool.FAST -> {
+                          videoFx += SpeedChangeEffect(speed)
+                          if (keepAudio && v.hasAudio) {
+                              audioFx += SonicAudioProcessor().apply { setSpeed(speed); setPitch(1f) }
+                          } else removeAudio = true
+                          if (tool == Tool.FAST) vBitrate = (vBitrate * 1.2).toInt()
+                      }
+                      Tool.ROTATE -> {
+                          if (rotation == 0 && !flipH && !flipV) { fail(tr("اختر تدويراً أو قلباً أولاً.", "Choose a rotation or flip first.")); return }
+                          videoFx += ScaleAndRotateTransformation.Builder()
+                              .setScale(if (flipH) -1f else 1f, if (flipV) -1f else 1f)
+                              .setRotationDegrees((360 - rotation).toFloat() % 360f)
+                              .build()
+                      }
+                      Tool.MUTE -> {
+                          if (!v.hasAudio) { fail(tr("هذا الفيديو بلا صوت أصلاً.", "This video is already silent.")); return }
+                          removeAudio = true; videoMime = null
+                      }
+                      Tool.LOOP -> {
+                          repeat = loops; videoMime = null
+                      }
+                      Tool.VOLUME -> {
+                          if (!v.hasAudio) { fail(tr("هذا الفيديو لا يحتوي على صوت.", "This video has no audio.")); return }
+                          val g = volume / 100f
+                          audioFx += ChannelMixingAudioProcessor().apply {
+                              putChannelMixingMatrix(ChannelMixingMatrix.create(1, 1).scaleBy(g))
+                              putChannelMixingMatrix(ChannelMixingMatrix.create(2, 2).scaleBy(g))
+                          }
+                          videoMime = null
+                          aBitrate = max(v.audioBitrate, 96_000)
+                      }
+                      else -> {}
+                  }
+
+                  val edited = EditedMediaItem.Builder(mediaItem(v, startMs, endMs))
+                      .setRemoveAudio(removeAudio)
+                      .setRemoveVideo(removeVideo)
+                      .setEffects(Effects(audioFx, videoFx))
+                      .build()
+                  val items = List(repeat) { edited }
+                  setBusy(true)
+                  exporter.start(items, outFile(ext), videoMime, vBitrate, aBitrate)
+              }
+
+              // ---- الضغط مع إعادة المحاولة
+              private fun startCompress(v: VInfo) {
+                  var scale = 1.0
+                  val fraction: Double
+                  if (tool == Tool.TARGET) {
+                      targetBytes = targetMb * 1024L * 1024L
+                      if (v.size in 1..targetBytes) {
+                          showResultOriginal(v, tr("حجم الفيديو (${formatSize(v.size)}) أصغر من ${targetMb}MB أصلاً — يمكنك إرساله كما هو.",
+                              "The video (${formatSize(v.size)}) is already under ${targetMb}MB — send it as is."))
+                          return
+                      }
+                  } else {
+                      when (preset) {
+                          0 -> { fraction = 0.20; scale = 0.5 }
+                          1 -> { fraction = 0.35; scale = 0.75 }
+                          2 -> { fraction = 0.50; scale = 1.0 }
+                          else -> { scale = customScale / 100.0; fraction = (0.5 * scale * scale + 0.05).coerceIn(0.12, 0.5) }
+                      }
+                      targetBytes = if (v.size > 0) (v.size * fraction).toLong() else 0L
+                  }
+
+                  if (targetBytes > 0 && v.durationMs > 0) {
+                      val total = targetBytes * 8.0 * 1000.0 / v.durationMs * 0.95
+                      curAudioBitrate = when {
+                          !v.hasAudio -> 0
+                          total < 350_000 -> 48_000
+                          total < 900_000 -> 64_000
+                          else -> 96_000
+                      }
+                      curVideoBitrate = max(60_000, (total - curAudioBitrate).toInt())
+                  } else {
+                      curAudioBitrate = 96_000
+                      curVideoBitrate = when (preset) { 0 -> 500_000; 1 -> 900_000; else -> 1_500_000 }
+                  }
+                  if (hevc) curVideoBitrate = (curVideoBitrate * 0.9).toInt()
+                  val byScale = ((v.shortSide * scale).toInt() / 2) * 2
+                  curShort = min(Exporter.shortSideFor(curVideoBitrate), if (byScale > 0) byScale else 720).coerceAtLeast(144)
+                  runCompress(v)
+              }
+
+              private fun runCompress(v: VInfo) {
+                  attempt++
+                  val fx = mutableListOf<Effect>()
+                  val th = Exporter.targetHeight(v.width, v.height, curShort)
+                  if (th > 0) fx += Presentation.createForHeight(th)
+                  val edited = EditedMediaItem.Builder(mediaItem(v))
+                      .setEffects(Effects(emptyList(), fx))
+                      .build()
+                  setBusy(true)
+                  exporter.start(listOf(edited), outFile("mp4"),
+                      if (hevc) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264, curVideoBitrate, curAudioBitrate)
+              }
+
+              private fun onExportDone(f: File) {
+                  val v = info ?: return
+                  if (tool == Tool.COMPRESS || tool == Tool.TARGET) {
+                      val size = f.length()
+                      if (targetBytes > 0 && size > targetBytes * 1.08 && attempt < 3) {
+                          val ratio = (targetBytes.toDouble() / size).coerceIn(0.3, 0.92)
+                          curVideoBitrate = max(50_000, (curVideoBitrate * ratio * 0.92).toInt())
+                          curShort = max(144, min(curShort, Exporter.shortSideFor(curVideoBitrate)) - 90)
+                          curShort -= curShort % 2
+                          f.delete()
+                          runCompress(v)
+                          return
+                      }
+                      if (v.size in 1..size) {
+                          f.delete()
+                          setBusy(false)
+                          status.text = ""
+                          showResultOriginal(v, tr("هذا الفيديو مضغوط أصلاً ولا يمكن تصغيره أكثر دون إفساده.",
+                              "This video is already highly compressed and can't get smaller without ruining it."))
+                          return
+                      }
+                  }
+                  val kind = if (tool == Tool.AUDIO) Media.Kind.AUDIO else Media.Kind.VIDEO
+                  finishWith(f, kind)
+              }
+
+              private fun fail(msg: String) {
+                  setBusy(false)
+                  status.text = "❌ " + tr("تعذّرت المعالجة:\n", "Failed:\n") + msg
+              }
+
+              // ---- GIF
+              private fun makeGif(v: VInfo) {
+                  val start = rangeStart
+                  val end = min(rangeEnd, start + 15f)
+                  if (end - start < 0.2f) { fail(tr("المقطع قصير جداً.", "Clip too short.")); return }
+                  val fps = gifFps
+                  val w = min(gifWidth, max(v.width, 2)).let { it - it % 2 }
+                  val h = (if (v.width > 0) (v.height.toLong() * w / v.width).toInt() else w).let { max(2, it - it % 2) }
+                  val out = outFile("gif")
+                  setBusy(true)
+                  Thread {
+                      val mmr = MediaMetadataRetriever()
+                      try {
+                          mmr.setDataSource(this, v.uri)
+                          val n = max(1, ((end - start) * fps).toInt())
+                          val enc = GifEncoder(out, w, h, max(2, 100 / fps))
+                          for (i in 0 until n) {
+                              val us = ((start + i.toFloat() / fps) * 1_000_000).toLong()
+                              val bmp = if (Build.VERSION.SDK_INT >= 27)
+                                  mmr.getScaledFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST, w, h)
+                              else mmr.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST)
+                              if (bmp != null) {
+                                  enc.addFrame(bmp)
+                                  bmp.recycle()
+                              }
+                              val p = (i + 1) * 100 / n
+                              runOnUiThread {
+                                  progress.isIndeterminate = false
+                                  progress.progress = p
+                                  status.text = progressText(p)
+                              }
+                          }
+                          enc.finish()
+                          runOnUiThread { finishWith(out, Media.Kind.GIF) }
+                      } catch (e: Exception) {
+                          runOnUiThread { fail(e.localizedMessage ?: e.toString()) }
+                      } finally {
+                          try { mmr.release() } catch (_: Exception) {}
+                      }
+                  }.start()
+              }
+
+              // ---- صورة من الفيديو
+              private fun grabFrame(v: VInfo) {
+                  val out = outFile("jpg")
+                  setBusy(true)
+                  Thread {
+                      val mmr = MediaMetadataRetriever()
+                      try {
+                          mmr.setDataSource(this, v.uri)
+                          val bmp = mmr.getFrameAtTime((frameSec * 1_000_000).toLong(), MediaMetadataRetriever.OPTION_CLOSEST)
+                              ?: throw IllegalStateException(tr("تعذّر قراءة الإطار", "Couldn't read the frame"))
+                          FileOutputStream(out).use { bmp.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+                          bmp.recycle()
+                          runOnUiThread { finishWith(out, Media.Kind.IMAGE) }
+                      } catch (e: Exception) {
+                          runOnUiThread { fail(e.localizedMessage ?: e.toString()) }
+                      } finally {
+                          try { mmr.release() } catch (_: Exception) {}
+                      }
+                  }.start()
+              }
+
+              // =================================================================== النتيجة
+
+              private fun finishWith(f: File, kind: Media.Kind) {
+                  status.text = tr("جارٍ الحفظ…", "Saving…")
+                  Thread {
+                      val uri = try { Media.save(this, f, kind) } catch (e: Exception) { null }
+                      runOnUiThread {
+                          setBusy(false)
+                          status.text = ""
+                          if (uri == null) { fail(tr("تعذّر حفظ الملف.", "Couldn't save the file.")); return@runOnUiThread }
+                          showResult(f.length(), uri, kind)
+                      }
+                  }.start()
+              }
+
+              private fun showResult(outSize: Long, uri: Uri, kind: Media.Kind) {
+                  val v = info
+                  result.removeAllViews()
+                  result.visibility = View.VISIBLE
+                  result.addView(label("✅ " + tr("تم بنجاح!", "Done!"), 20f, C.TEXT, true))
+                  if (v != null && v.size > 0) {
+                      val pct = ((v.size - outSize) * 100 / v.size).toInt()
+                      val change = if (pct > 0) tr("أصغر بنسبة $pct%", "$pct% smaller")
+                      else tr("أكبر بنسبة ${-pct}%", "${-pct}% larger")
+                      result.addView(label(formatSize(v.size) + "  →  " + formatSize(outSize), 18f, C.CYAN, true), lp(top = 8))
+                      if (kind == Media.Kind.VIDEO || kind == Media.Kind.AUDIO) result.addView(label(change, 14f, C.SUB), lp(top = 2))
+                  } else {
+                      result.addView(label(formatSize(outSize), 18f, C.CYAN, true), lp(top = 8))
+                  }
+                  val where = when (kind) {
+                      Media.Kind.VIDEO -> "Movies/VideoToolkit"
+                      Media.Kind.AUDIO -> "Music/VideoToolkit"
+                      else -> "Pictures/VideoToolkit"
+                  }
+                  result.addView(label(tr("حُفظ في: ", "Saved to: ") + where, 13f, C.SUB), lp(top = 4))
+                  val row = hbox()
+                  row.addView(secondaryButton(tr("📤 مشاركة", "📤 Share"), Color.parseColor("#2563EB")) {
+                      Media.share(this, uri, kind.mime)
+                  }, lp(w = 0, weight = 1f, end = 6))
+                  row.addView(secondaryButton(tr("▶ فتح", "▶ Open")) { Media.open(this, uri, kind.mime) },
+                      lp(w = 0, weight = 1f, start = 6))
+                  result.addView(row, lp(top = 14))
+              }
+
+              private fun showResultOriginal(v: VInfo, message: String) {
+                  result.removeAllViews()
+                  result.visibility = View.VISIBLE
+                  result.addView(label("ℹ️ " + message, 15f, C.TEXT))
+                  result.addView(secondaryButton(tr("📤 إرسال الأصلي (", "📤 Send original (") + formatSize(v.size) + ")",
+                      Color.parseColor("#2563EB")) { Media.share(this, v.uri, "video/*") }, lp(top = 12))
+              }
+          }
+          EOF_VC
+          mkdir -p app/src/main/java/com/omar/videotoolkit
+          cat > app/src/main/java/com/omar/videotoolkit/Ui.kt <<'EOF_VC'
+          package com.omar.videotoolkit
+
+          import android.content.Context
+          import android.content.res.ColorStateList
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
+          import android.graphics.drawable.RippleDrawable
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import kotlin.math.roundToInt
+
+          /** ألوان الواجهة الداكنة */
+          object C {
+              val BG = Color.parseColor("#111217")
+              val CARD = Color.parseColor("#1E2027")
+              val CARD2 = Color.parseColor("#2A2D36")
+              val CYAN = Color.parseColor("#22D3EE")
+              val PURPLE = Color.parseColor("#A855F7")
+              val PINK = Color.parseColor("#EC4899")
+              val ORANGE = Color.parseColor("#F59E0B")
+              val TEXT = Color.WHITE
+              val SUB = Color.parseColor("#9CA3AF")
+              val DARK_TEXT = Color.parseColor("#04121A")
+          }
+
+          /** اللغة: عربية افتراضياً */
+          object Lang {
+              var ar = true
+              fun load(ctx: Context) {
+                  ar = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).getString("lang", "ar") == "ar"
+              }
+              fun set(ctx: Context, arabic: Boolean) {
+                  ar = arabic
+                  ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).edit()
+                      .putString("lang", if (arabic) "ar" else "en").apply()
+              }
+              val dir get() = if (ar) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
+          }
+
+          fun tr(ar: String, en: String) = if (Lang.ar) ar else en
+
+          fun Context.dp(v: Int) = (v * resources.displayMetrics.density).roundToInt()
+          fun Context.dpf(v: Float) = v * resources.displayMetrics.density
+
+          fun Context.round(color: Int, radiusDp: Float, strokeDp: Int = 0, strokeColor: Int = 0) =
+              GradientDrawable().apply {
+                  setColor(color)
+                  cornerRadius = dpf(radiusDp)
+                  if (strokeDp > 0) setStroke(dp(strokeDp), strokeColor)
+              }
+
+          fun Context.gradient(colors: IntArray, radiusDp: Float,
+                               orientation: GradientDrawable.Orientation = GradientDrawable.Orientation.TL_BR) =
+              GradientDrawable(orientation, colors).apply { cornerRadius = dpf(radiusDp) }
+
+          /** خلفية قابلة للضغط مع تأثير الموجة */
+          fun Context.clickable(bg: GradientDrawable) =
+              RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33FFFFFF")), bg, null)
+
+          fun Context.label(text: String, sizeSp: Float = 15f, color: Int = C.TEXT, bold: Boolean = false) =
+              TextView(this).apply {
+                  this.text = text
+                  textSize = sizeSp
+                  setTextColor(color)
+                  if (bold) typeface = Typeface.DEFAULT_BOLD
+              }
+
+          fun Context.primaryButton(text: String, onClick: () -> Unit) = TextView(this).apply {
+              this.text = text
+              textSize = 19f
+              typeface = Typeface.DEFAULT_BOLD
+              setTextColor(C.DARK_TEXT)
+              gravity = Gravity.CENTER
+              setPadding(dp(16), dp(16), dp(16), dp(16))
+              background = clickable(round(C.CYAN, 18f))
+              isClickable = true
+              setOnClickListener { onClick() }
+          }
+
+          fun Context.secondaryButton(text: String, color: Int = C.CARD2, onClick: () -> Unit) = TextView(this).apply {
+              this.text = text
+              textSize = 15f
+              typeface = Typeface.DEFAULT_BOLD
+              setTextColor(C.TEXT)
+              gravity = Gravity.CENTER
+              setPadding(dp(12), dp(13), dp(12), dp(13))
+              background = clickable(round(color, 14f))
+              isClickable = true
+              setOnClickListener { onClick() }
+          }
+
+          fun Context.lp(w: Int = ViewGroup.LayoutParams.MATCH_PARENT, h: Int = ViewGroup.LayoutParams.WRAP_CONTENT,
+                         top: Int = 0, bottom: Int = 0, start: Int = 0, end: Int = 0, weight: Float = 0f) =
+              LinearLayout.LayoutParams(w, h, weight).apply {
+                  topMargin = dp(top); bottomMargin = dp(bottom)
+                  marginStart = dp(start); marginEnd = dp(end)
+              }
+
+          fun Context.vbox(paddingDp: Int = 0) = LinearLayout(this).apply {
+              orientation = LinearLayout.VERTICAL
+              setPadding(dp(paddingDp), dp(paddingDp), dp(paddingDp), dp(paddingDp))
+          }
+
+          fun Context.hbox() = LinearLayout(this).apply {
+              orientation = LinearLayout.HORIZONTAL
+              gravity = Gravity.CENTER_VERTICAL
+          }
+
+          fun formatSize(b: Long): String = when {
+              b < 0 -> "?"
+              b < 1024 -> "$b B"
+              b < 1024 * 1024 -> String.format(java.util.Locale.US, "%.0f KB", b / 1024.0)
+              b < 1024L * 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f MB", b / 1048576.0)
+              else -> String.format(java.util.Locale.US, "%.2f GB", b / 1073741824.0)
+          }
+
+          fun formatTime(sec: Float): String {
+              val s = sec.toInt().coerceAtLeast(0)
+              val tenth = ((sec - s) * 10).toInt().coerceIn(0, 9)
+              return if (s >= 3600) String.format(java.util.Locale.US, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+              else String.format(java.util.Locale.US, "%02d:%02d.%d", s / 60, s % 60, tenth)
+          }
+          EOF_VC
+          mkdir -p app/src/main/res/drawable
+          cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:pathData="M0,0h108v108h-108z">
+                  <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+                      <gradient android:type="linear" android:startX="0" android:startY="0"
+                          android:endX="108" android:endY="108"
+                          android:startColor="#22D3EE" android:endColor="#A855F7" />
+                  </aapt:attr>
+              </path>
+              <path android:fillColor="#FFFFFF" android:pathData="M28,38h38a5,5 0 0 1 5,5v22a5,5 0 0 1 -5,5h-38a5,5 0 0 1 -5,-5v-22a5,5 0 0 1 5,-5z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M74,47l12,-8v30l-12,-8z" />
+              <path android:fillColor="#A855F7" android:pathData="M40,46l14,8l-14,8z" />
+          </vector>
+          EOF_VC
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/strings.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">ضاغط الفيديو Pro</string>
+          </resources>
+          EOF_VC
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/themes.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
+                  <item name="colorPrimary">#22D3EE</item>
+                  <item name="colorOnPrimary">#04121A</item>
+                  <item name="colorSecondary">#A855F7</item>
+                  <item name="colorSurface">#1E2027</item>
+                  <item name="android:windowBackground">#111217</item>
+                  <item name="android:statusBarColor">#111217</item>
+                  <item name="android:navigationBarColor">#16181D</item>
+              </style>
+          </resources>
+          EOF_VC
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/file_paths.xml <<'EOF_VC'
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths>
+              <cache-path name="cache" path="." />
+              <external-files-path name="external" path="." />
+          </paths>
+          EOF_VC
+          cat > build.gradle.kts <<'EOF_VC'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+          }
+          EOF_VC
+          cat > gradle.properties <<'EOF_VC'
+          org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          kotlin.code.style=official
+          EOF_VC
+          cat > settings.gradle.kts <<'EOF_VC'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "VideoToolkit"
+          include(":app")
+          EOF_VC
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Build APK
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          mkdir -p out
+          cp app/build/outputs/apk/debug/app-debug.apk out/VideoToolkit.apk
+
+      - name: Show errors
+        if: failure()
+        run: |
+          grep -E "^e: |error:|What went wrong" -A3 build.log | head -80
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: studio-${{ github.run_number }}
+          name: Video Toolkit ${{ github.run_number }}
+          files: vt/out/VideoToolkit.apk
