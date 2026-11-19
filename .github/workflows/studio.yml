@@ -37,8 +37,8 @@ jobs:
                   applicationId = "com.omar.videotoolkit"
                   minSdk = 24
                   targetSdk = 35
-                  versionCode = 1
-                  versionName = "1.0"
+                  versionCode = 2
+                  versionName = "2.0"
               }
               buildTypes { release { isMinifyEnabled = false } }
               compileOptions {
@@ -129,16 +129,17 @@ jobs:
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   Lang.load(this)
+                  window.statusBarColor = C.BG
                   val scroll = ScrollView(this).apply { setBackgroundColor(C.BG) }
                   val root = vbox(18).apply { layoutDirection = Lang.dir }
                   scroll.addView(root)
 
                   val top = hbox()
-                  top.addView(label(if (Lang.ar) "→" else "←", 26f, C.TEXT, true).apply {
-                      setPadding(dp(4), 0, dp(14), 0)
+                  top.addView(icon(Lang.backIcon, 28f, C.TEXT).apply {
+                      background = clickable(round(C.CARD2, 16f))
                       setOnClickListener { finish() }
-                  })
-                  top.addView(label("🎬  " + tr("إبداعاتي", "My Creations"), 22f, C.TEXT, true))
+                  }, lp(w = dp(46), h = dp(46), end = 14))
+                  top.addView(label(tr("إبداعاتي", "My Creations"), 24f, C.TEXT, bold = true))
                   root.addView(top, lp(bottom = 16))
 
                   list = vbox()
@@ -155,35 +156,37 @@ jobs:
                   list.removeAllViews()
                   val items = Creations.all(this)
                   if (items.isEmpty()) {
+                      list.addView(icon("movie", 72f, C.MUTED), lp(top = 80))
                       list.addView(label(tr("لا توجد ملفات بعد.\nكل ما تنشئه بالتطبيق سيظهر هنا.",
                           "Nothing yet.\nEverything you create will show up here."), 16f, C.SUB).apply {
                           gravity = Gravity.CENTER
-                      }, lp(top = 80))
+                      }, lp(top = 12))
                       return
                   }
                   val fmt = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
                   items.forEach { item ->
-                      val icon = when (item.kind) {
-                          Media.Kind.VIDEO -> "🎬"
-                          Media.Kind.AUDIO -> "🎵"
-                          Media.Kind.GIF -> "🎞️"
-                          Media.Kind.IMAGE -> "📸"
+                      val (ic, color) = when (item.kind) {
+                          Media.Kind.VIDEO -> "movie" to Color.parseColor("#FF5F8F")
+                          Media.Kind.AUDIO -> "music_note" to Color.parseColor("#8B5CF6")
+                          Media.Kind.GIF -> "gif_box" to Color.parseColor("#0A84FF")
+                          Media.Kind.IMAGE -> "image" to Color.parseColor("#1DB954")
                       }
                       val card = vbox(14).apply { background = round(C.CARD, 18f) }
                       val head = hbox()
-                      head.addView(label(icon, 26f), lp(w = -2))
+                      head.addView(icon(ic, 26f, C.TEXT, filled = true).apply { background = round(color, 14f) },
+                          lp(w = dp(48), h = dp(48)))
                       head.addView(vbox().apply {
                           addView(label(item.name, 14f, C.TEXT, true).apply { maxLines = 1 })
                           addView(label(formatSize(item.size) + "  •  " + fmt.format(Date(item.time)), 12f, C.SUB))
                       }, lp(w = 0, weight = 1f, start = 10))
                       card.addView(head, lp())
                       val row = hbox()
-                      row.addView(secondaryButton(tr("▶ فتح", "▶ Open")) { Media.open(this, item.uri, item.kind.mime) },
+                      row.addView(secondaryButton(tr("فتح", "Open"), "play_arrow") { Media.open(this, item.uri, item.kind.mime) },
                           lp(w = 0, weight = 1f, end = 4))
-                      row.addView(secondaryButton(tr("📤 مشاركة", "📤 Share"), Color.parseColor("#2563EB")) {
+                      row.addView(secondaryButton(tr("مشاركة", "Share"), "share", Color.parseColor("#2563EB")) {
                           Media.share(this, item.uri, item.kind.mime)
                       }, lp(w = 0, weight = 1f, start = 4, end = 4))
-                      row.addView(secondaryButton("✕") {
+                      row.addView(secondaryButton("", "close") {
                           Creations.remove(this, item); render()
                       }, lp(w = dp(52), start = 4))
                       card.addView(row, lp(top = 10))
@@ -503,7 +506,6 @@ jobs:
           import android.view.View
           import android.widget.FrameLayout
           import android.widget.ImageView
-          import android.widget.LinearLayout
           import android.widget.ScrollView
           import androidx.appcompat.app.AppCompatActivity
           import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -513,6 +515,7 @@ jobs:
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   Lang.load(this)
+                  window.statusBarColor = C.BG
                   buildUi()
               }
 
@@ -525,106 +528,129 @@ jobs:
                       setBackgroundColor(C.BG)
                       layoutDirection = Lang.dir
                   }
-                  val scroll = ScrollView(this)
-                  val root = vbox().apply { setPadding(dp(18), dp(14), dp(18), dp(110)) }
+                  val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
+                  val root = vbox().apply { setPadding(dp(18), dp(14), dp(18), dp(120)) }
                   scroll.addView(root)
                   frame.addView(scroll, FrameLayout.LayoutParams(-1, -1))
 
-                  // ---------- الترويسة
+                  // ---------- الترويسة: شعار + اسم + أزرار
                   val header = hbox()
                   header.addView(ImageView(this).apply {
                       setImageResource(R.drawable.ic_launcher)
                       clipToOutline = true
-                      background = round(C.CARD, 14f)
-                  }, lp(w = dp(48), h = dp(48)))
+                      background = round(C.CARD, 16f)
+                  }, lp(w = dp(52), h = dp(52)))
                   header.addView(vbox().apply {
-                      addView(label(tr("ضاغط الفيديو", "VIDEO"), 22f, C.TEXT, true))
-                      addView(label(tr("PRO • أدوات الفيديو", "COMPRESSOR PRO"), 13f, C.CYAN, true))
+                      addView(label(tr("ضاغط الفيديو", "VIDEO"), 24f, C.TEXT, bold = true))
+                      addView(label(tr("استوديو أدوات الفيديو", "COMPRESSOR PRO"), 13f, C.CYAN, weight = 1))
                   }, lp(w = 0, weight = 1f, start = 12))
-                  header.addView(label(if (Lang.ar) "EN" else "ع", 15f, C.TEXT, true).apply {
-                      gravity = Gravity.CENTER
-                      background = clickable(round(C.CARD2, 14f))
-                      setOnClickListener { Lang.set(this@MainActivity, !Lang.ar); recreate() }
+                  header.addView(headerButton(null, if (Lang.ar) "EN" else "ع") {
+                      Lang.set(this, !Lang.ar); recreate()
                   }, lp(w = dp(46), h = dp(46), end = 8))
-                  header.addView(label("📁", 20f).apply {
-                      gravity = Gravity.CENTER
-                      background = clickable(round(C.CARD2, 14f))
-                      setOnClickListener { startActivity(Intent(this@MainActivity, CreationsActivity::class.java)) }
+                  header.addView(headerButton("video_library", null) {
+                      startActivity(Intent(this, CreationsActivity::class.java))
                   }, lp(w = dp(46), h = dp(46)))
                   root.addView(header, lp())
 
                   // ---------- الشريط الملوّن
                   root.addView(View(this).apply {
-                      background = gradient(intArrayOf(C.CYAN, C.PURPLE, C.PINK, C.ORANGE), 4f,
+                      background = gradient(intArrayOf(C.CYAN, Color.parseColor("#7C6CF2"), C.PINK, C.ORANGE), 4f,
                           GradientDrawable.Orientation.LEFT_RIGHT)
-                  }, lp(h = dp(7), top = 16))
+                  }, lp(h = dp(6), top = 16))
 
-                  // ---------- البطاقة المميزة
+                  // ---------- البطاقة المميزة بحدود متدرجة
                   val banner = FrameLayout(this).apply {
-                      background = clickable(GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                          intArrayOf(Color.parseColor("#1B2333"), Color.parseColor("#2A1838"))).apply {
-                          cornerRadius = dpf(20f)
-                          setStroke(dp(2), C.PURPLE)
-                      })
+                      background = clickable(gradientBorder(intArrayOf(C.CYAN, C.PURPLE, C.PINK, C.ORANGE),
+                          Color.parseColor("#1F2530"), 20f, 2))
                       isClickable = true
                       setOnClickListener { open(Tool.TARGET) }
+                      pressScale(0.98f)
                   }
-                  val bannerRow = hbox().apply { setPadding(dp(16), dp(18), dp(16), dp(18)) }
-                  bannerRow.addView(label("📲", 40f), lp(w = -2))
-                  bannerRow.addView(vbox().apply {
-                      addView(label(tr("صغّر الفيديو لحجم محدد", "Shrink to an exact size"), 13f, C.CYAN))
-                      addView(label(tr("جاهز للإرسال: واتساب • تيليجرام • Claude", "Ready for WhatsApp • Telegram • Claude"),
-                          17f, C.TEXT, true))
-                  }, lp(w = 0, weight = 1f, start = 12))
-                  banner.addView(bannerRow)
-                  banner.addView(label(tr("جديد", "NEW"), 12f, C.TEXT, true).apply {
-                      background = round(C.PINK, 8f)
-                      setPadding(dp(10), dp(3), dp(10), dp(3))
+                  val bRow = hbox().apply { setPadding(dp(18), dp(18), dp(18), dp(18)) }
+                  // ثلاث دوائر صغيرة ترمز لتطبيقات المراسلة
+                  val bubbles = FrameLayout(this)
+                  listOf(
+                      Triple("chat", intArrayOf(Color.parseColor("#25D366"), Color.parseColor("#128C7E")), 0),
+                      Triple("send", intArrayOf(Color.parseColor("#37AEE2"), Color.parseColor("#1E96C8")), 1),
+                      Triple("smart_toy", intArrayOf(Color.parseColor("#D97757"), Color.parseColor("#B85C3E")), 2),
+                  ).forEach { (ic, colors, i) ->
+                      bubbles.addView(icon(ic, 18f, C.TEXT, filled = true).apply { background = oval(colors) },
+                          FrameLayout.LayoutParams(dp(34), dp(34)).apply {
+                              marginStart = dp(if (i == 1) 22 else if (i == 2) 8 else 0)
+                              topMargin = dp(if (i == 2) 24 else if (i == 1) 6 else 0)
+                          })
+                  }
+                  bRow.addView(bubbles, lp(w = dp(60), h = dp(60)))
+                  bRow.addView(vbox().apply {
+                      addView(label(tr("حجم كبير يمنع الإرسال؟", "File too big to send?"), 13f, C.CYAN, weight = 1))
+                      addView(label(tr("ضغط لحجم محدد", "Compress to Exact Size"), 20f, C.TEXT, bold = true), lp(top = 2))
+                      addView(label(tr("واتساب • تيليجرام • Claude", "WhatsApp • Telegram • Claude"), 13f, C.SUB), lp(top = 2))
+                  }, lp(w = 0, weight = 1f, start = 14))
+                  bRow.addView(icon("auto_awesome", 30f, C.CYAN, filled = true).apply {
+                      background = round(Color.parseColor("#1A3A44"), 14f, 1, C.CYAN)
+                  }, lp(w = dp(52), h = dp(52)))
+                  banner.addView(bRow)
+                  banner.addView(label(tr("جديد", "NEW"), 13f, C.TEXT, bold = true).apply {
+                      background = gradient(intArrayOf(C.PINK, Color.parseColor("#F43F5E")), 9f)
+                      setPadding(dp(10), dp(2), dp(10), dp(2))
                   }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(8), dp(10), 0) })
                   root.addView(banner, lp(top = 18))
 
-                  // ---------- ثلاث بطاقات كبيرة
+                  // ---------- ثلاث بطاقات كبيرة متدرجة
                   val big = hbox()
                   val bigTools = listOf(
-                      Tool.COMPRESS to intArrayOf(Color.parseColor("#FB7185"), Color.parseColor("#F59E0B")),
-                      Tool.AUDIO to intArrayOf(Color.parseColor("#4F46E5"), Color.parseColor("#C026D3")),
-                      Tool.CONVERT to intArrayOf(Color.parseColor("#8B5CF6"), Color.parseColor("#06B6D4")),
+                      Tool.COMPRESS to intArrayOf(Color.parseColor("#FF5F8F"), Color.parseColor("#FFA552")),
+                      Tool.AUDIO to intArrayOf(Color.parseColor("#C04CF5"), Color.parseColor("#5B4BFF")),
+                      Tool.CONVERT to intArrayOf(Color.parseColor("#9F6BFF"), Color.parseColor("#22C8F0")),
                   )
                   bigTools.forEachIndexed { i, (t, colors) ->
                       big.addView(vbox(10).apply {
                           gravity = Gravity.CENTER
-                          background = clickable(gradient(colors, 20f))
+                          background = clickable(gradient(colors, 22f))
+                          elevation = dpf(4f)
                           isClickable = true
                           setOnClickListener { open(t) }
-                          addView(label(t.emoji, 34f).apply { gravity = Gravity.CENTER }, lp())
-                          addView(label(t.title, 14f, C.TEXT, true).apply { gravity = Gravity.CENTER }, lp(top = 8))
-                      }, lp(w = 0, h = dp(132), weight = 1f, start = if (i == 0) 0 else 5, end = if (i == 2) 0 else 5))
+                          pressScale()
+                          addView(icon(t.ic, 34f, C.TEXT).apply {
+                              background = GradientDrawable().apply {
+                                  shape = GradientDrawable.OVAL
+                                  setColor(Color.parseColor("#26FFFFFF"))
+                                  setStroke(dp(2), Color.parseColor("#80FFFFFF"))
+                              }
+                          }, lp(w = dp(64), h = dp(64)))
+                          addView(label(t.title, 15f, C.TEXT, bold = true).apply {
+                              gravity = Gravity.CENTER; maxLines = 2
+                          }, lp(top = 10))
+                      }, lp(w = 0, h = dp(150), weight = 1f, start = if (i == 0) 0 else 5, end = if (i == 2) 0 else 5))
                   }
                   root.addView(big, lp(top = 18))
 
                   // ---------- أدوات GIF والصور
-                  root.addView(label(tr("أدوات GIF والصور", "GIF & Photo Tools"), 24f, C.TEXT, true), lp(top = 24, bottom = 12))
+                  root.addView(sectionTitle(tr("أدوات GIF والصور", "GIF Tools")), lp(top = 26, bottom = 12))
                   val gifRow = hbox()
-                  listOf(Tool.GIF to Color.parseColor("#0EA5E9"), Tool.FRAME to Color.parseColor("#22C55E"))
-                      .forEachIndexed { i, (t, color) ->
-                          gifRow.addView(hbox().apply {
-                              setPadding(dp(12), dp(14), dp(12), dp(14))
-                              background = clickable(round(C.CARD2, 18f))
-                              isClickable = true
-                              setOnClickListener { open(t) }
-                              addView(label(t.emoji, 24f).apply {
-                                  gravity = Gravity.CENTER
-                                  background = round(color, 16f)
-                              }, lp(w = dp(54), h = dp(54)))
-                              addView(label(t.title, 16f, C.TEXT, true), lp(w = 0, weight = 1f, start = 10))
-                          }, lp(w = 0, weight = 1f, start = if (i == 0) 0 else 6, end = if (i == 0) 6 else 0))
-                      }
+                  listOf(
+                      Tool.GIF to intArrayOf(Color.parseColor("#0A84FF"), Color.parseColor("#2AA9FF")),
+                      Tool.FRAME to intArrayOf(Color.parseColor("#1DB954"), Color.parseColor("#34D57A")),
+                  ).forEachIndexed { i, (t, colors) ->
+                      gifRow.addView(hbox().apply {
+                          setPadding(dp(12), dp(14), dp(12), dp(14))
+                          background = clickable(round(C.PILL, 20f))
+                          isClickable = true
+                          setOnClickListener { open(t) }
+                          pressScale()
+                          addView(icon(t.ic, 30f, C.TEXT, filled = true).apply { background = gradient(colors, 18f) },
+                              lp(w = dp(58), h = dp(58)))
+                          addView(label(t.title, 17f, C.TEXT, weight = 1).apply { maxLines = 2 },
+                              lp(w = 0, weight = 1f, start = 12))
+                      }, lp(w = 0, weight = 1f, start = if (i == 0) 0 else 6, end = if (i == 0) 6 else 0))
+                  }
                   root.addView(gifRow, lp())
 
-                  // ---------- أدوات الفيديو (شبكة)
-                  root.addView(label(tr("أدوات الفيديو", "Video Tools"), 24f, C.TEXT, true), lp(top = 26, bottom = 12))
+                  // ---------- أدوات الفيديو (شبكة 3 أعمدة بدوائر داكنة)
+                  root.addView(sectionTitle(tr("أدوات الفيديو", "Video Tools")), lp(top = 28, bottom = 16))
                   val grid = listOf(Tool.TRIM, Tool.CROP, Tool.SLOW, Tool.FAST, Tool.ROTATE, Tool.MUTE,
                       Tool.LOOP, Tool.VOLUME, Tool.INFO)
+                  val tint = listOf("#4DA3FF", "#4DA3FF", "#4DA3FF")
                   grid.chunked(3).forEach { rowTools ->
                       val row = hbox()
                       rowTools.forEach { t ->
@@ -632,49 +658,72 @@ jobs:
                               gravity = Gravity.CENTER_HORIZONTAL
                               isClickable = true
                               setOnClickListener { open(t) }
-                              addView(label(t.emoji, 30f).apply {
-                                  gravity = Gravity.CENTER
+                              pressScale(0.92f)
+                              addView(icon(t.ic, 38f, Color.parseColor(tint[0])).apply {
                                   background = clickable(GradientDrawable().apply {
                                       shape = GradientDrawable.OVAL
-                                      setColor(C.CARD)
+                                      setColor(Color.parseColor("#2A2B31"))
+                                      setStroke(dp(1), Color.parseColor("#33363D"))
                                   })
-                              }, lp(w = dp(84), h = dp(84)))
-                              addView(label(t.title, 14f, C.TEXT).apply { gravity = Gravity.CENTER }, lp(top = 8))
-                          }, lp(w = 0, weight = 1f, bottom = 18))
+                              }, lp(w = dp(88), h = dp(88)))
+                              addView(label(t.title, 15f, C.TEXT, weight = 1).apply {
+                                  gravity = Gravity.CENTER; maxLines = 1
+                              }, lp(top = 10))
+                          }, lp(w = 0, weight = 1f, bottom = 22))
                       }
                       root.addView(row, lp())
                   }
 
-                  // ---------- الشريط السفلي
+                  // ---------- الشريط السفلي مع زر مرفوع في الوسط
                   val bottom = FrameLayout(this)
                   val bar = hbox().apply {
-                      setBackgroundColor(Color.parseColor("#1A1C22"))
-                      setPadding(dp(20), dp(10), dp(20), dp(10))
+                      background = GradientDrawable().apply {
+                          setColor(C.SURFACE)
+                          val r = dpf(24f)
+                          cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+                      }
+                      elevation = dpf(12f)
+                      setPadding(dp(20), dp(8), dp(20), dp(8))
                   }
-                  bar.addView(navItem("⚙️", tr("الإعدادات", "Settings")) { showSettings() }, lp(w = 0, weight = 1f))
-                  bar.addView(View(this), lp(w = dp(80), h = 1))
-                  bar.addView(navItem("🎬", tr("إبداعاتي", "My Creations")) {
+                  bar.addView(navItem("settings", tr("الإعدادات", "Settings")) { showSettings() }, lp(w = 0, weight = 1f))
+                  bar.addView(View(this), lp(w = dp(90), h = 1))
+                  bar.addView(navItem("movie", tr("إبداعاتي", "My Creations")) {
                       startActivity(Intent(this, CreationsActivity::class.java))
                   }, lp(w = 0, weight = 1f))
-                  bottom.addView(bar, FrameLayout.LayoutParams(-1, dp(72), Gravity.BOTTOM))
-                  bottom.addView(label("🗜️", 28f).apply {
-                      gravity = Gravity.CENTER
+                  bottom.addView(bar, FrameLayout.LayoutParams(-1, dp(76), Gravity.BOTTOM))
+                  bottom.addView(icon("compress", 34f, C.TEXT).apply {
                       background = clickable(GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                          intArrayOf(C.CYAN, Color.parseColor("#2563EB"))).apply { shape = GradientDrawable.OVAL })
-                      elevation = dpf(8f)
+                          intArrayOf(C.CYAN, C.BLUE)).apply {
+                          shape = GradientDrawable.OVAL
+                          setStroke(dp(4), C.BG)
+                      })
+                      elevation = dpf(16f)
                       setOnClickListener { open(Tool.COMPRESS) }
-                  }, FrameLayout.LayoutParams(dp(70), dp(70), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-                  frame.addView(bottom, FrameLayout.LayoutParams(-1, dp(100), Gravity.BOTTOM))
+                      pressScale(0.9f)
+                  }, FrameLayout.LayoutParams(dp(76), dp(76), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+                  frame.addView(bottom, FrameLayout.LayoutParams(-1, dp(108), Gravity.BOTTOM))
 
                   setContentView(frame)
               }
 
-              private fun navItem(icon: String, text: String, onClick: () -> Unit) = vbox().apply {
+              private fun sectionTitle(text: String) = label(text, 26f, C.TEXT, bold = true)
+
+              private fun headerButton(ic: String?, text: String?, onClick: () -> Unit): View {
+                  val v = if (ic != null) icon(ic, 24f, C.TEXT) else label(text ?: "", 15f, C.TEXT, bold = true)
+                  v.gravity = Gravity.CENTER
+                  v.background = clickable(round(C.CARD2, 16f))
+                  v.setOnClickListener { onClick() }
+                  v.pressScale(0.9f)
+                  return v
+              }
+
+              private fun navItem(ic: String, text: String, onClick: () -> Unit) = vbox().apply {
                   gravity = Gravity.CENTER
                   isClickable = true
                   setOnClickListener { onClick() }
-                  addView(label(icon, 22f).apply { gravity = Gravity.CENTER }, lp())
-                  addView(label(text, 12f, C.SUB).apply { gravity = Gravity.CENTER }, lp())
+                  pressScale(0.92f)
+                  addView(icon(ic, 28f, C.SUB, filled = true), lp())
+                  addView(label(text, 13f, C.SUB, weight = 1).apply { gravity = Gravity.CENTER }, lp(top = 2))
               }
 
               private fun showSettings() {
@@ -690,8 +739,8 @@ jobs:
                           MaterialAlertDialogBuilder(this)
                               .setTitle(tr("ضاغط الفيديو Pro", "Video Compressor Pro"))
                               .setMessage(tr(
-                                  "الإصدار 1.0\nيعمل بالكامل على هاتفك دون إنترنت ودون إعلانات.\nمبني بمكتبة AndroidX Media3.",
-                                  "Version 1.0\nRuns fully on your phone — offline, no ads.\nBuilt with AndroidX Media3."))
+                                  "الإصدار 2.0\nيعمل بالكامل على هاتفك دون إنترنت ودون إعلانات.\nمبني بمكتبة AndroidX Media3.",
+                                  "Version 2.0\nRuns fully on your phone — offline, no ads.\nBuilt with AndroidX Media3."))
                               .setPositiveButton("OK", null)
                               .show()
                       }
@@ -932,22 +981,22 @@ jobs:
           package com.omar.videotoolkit
 
           /** جميع أدوات التطبيق */
-          enum class Tool(val emoji: String, val ar: String, val en: String, val descAr: String, val descEn: String) {
-              COMPRESS("🗜️", "ضغط الفيديو", "Compress Video", "تصغير الحجم بأكثر من 50%", "Shrink size by 50%+"),
-              TARGET("🎯", "ضغط لحجم محدد", "Compress to Size", "واتساب 16MB، أو أي حجم تختاره", "WhatsApp 16MB or any size"),
-              CONVERT("🔄", "تحويل الترميز", "Convert Codec", "MP4 بترميز H.264 أو H.265", "MP4 as H.264 or H.265"),
-              AUDIO("🎵", "فيديو إلى صوت", "Video to Audio", "استخراج الصوت بصيغة M4A", "Extract audio as M4A"),
-              GIF("🎞️", "فيديو إلى GIF", "Video to GIF", "صورة متحركة من مقطع", "Animated GIF from a clip"),
-              FRAME("📸", "صورة من الفيديو", "Video to Photo", "التقاط لقطة بجودة كاملة", "Grab a full-quality frame"),
-              TRIM("✂️", "قص المدة", "Video Trim", "اختر البداية والنهاية", "Pick start and end"),
-              CROP("🔲", "اقتصاص", "Video Crop", "1:1، 9:16، 4:5، 16:9", "1:1, 9:16, 4:5, 16:9"),
-              SLOW("🐢", "تبطيء", "Slow Motion", "حتى 0.25×", "Down to 0.25×"),
-              FAST("⚡", "تسريع", "Fast Motion", "حتى 4×", "Up to 4×"),
-              ROTATE("🔃", "تدوير وقلب", "Flip & Rotate", "90°، 180°، قلب أفقي/عمودي", "90°, 180°, mirror"),
-              MUTE("🔇", "كتم الصوت", "Mute Video", "إزالة الصوت بالكامل", "Remove the audio"),
-              LOOP("🔁", "تكرار الفيديو", "Video Looper", "كرّر المقطع حتى 10 مرات", "Repeat up to 10×"),
-              VOLUME("🔊", "مستوى الصوت", "Video Volume", "خفض أو رفع حتى 300%", "Lower or boost to 300%"),
-              INFO("ℹ️", "معلومات الفيديو", "Video Info", "الدقة، الترميز، معدل البت…", "Resolution, codec, bitrate…");
+          enum class Tool(val emoji: String, val ic: String, val ar: String, val en: String, val descAr: String, val descEn: String) {
+              COMPRESS("🗜️", "compress", "ضغط الفيديو", "Compress Video", "تصغير الحجم بأكثر من 50%", "Shrink size by 50%+"),
+              TARGET("🎯", "data_usage", "ضغط لحجم محدد", "Compress to Size", "واتساب 16MB، أو أي حجم تختاره", "WhatsApp 16MB or any size"),
+              CONVERT("🔄", "transform", "تحويل الترميز", "Convert Codec", "MP4 بترميز H.264 أو H.265", "MP4 as H.264 or H.265"),
+              AUDIO("🎵", "audio_file", "فيديو إلى صوت", "Video to Audio", "استخراج الصوت بصيغة M4A", "Extract audio as M4A"),
+              GIF("🎞️", "gif_box", "فيديو إلى GIF", "Video to GIF", "صورة متحركة من مقطع", "Animated GIF from a clip"),
+              FRAME("📸", "image", "صورة من الفيديو", "Video to Photo", "التقاط لقطة بجودة كاملة", "Grab a full-quality frame"),
+              TRIM("✂️", "content_cut", "قص المدة", "Video Trim", "اختر البداية والنهاية", "Pick start and end"),
+              CROP("🔲", "crop", "اقتصاص", "Video Crop", "1:1، 9:16، 4:5، 16:9", "1:1, 9:16, 4:5, 16:9"),
+              SLOW("🐢", "slow_motion_video", "تبطيء", "Slow Motion", "حتى 0.25×", "Down to 0.25×"),
+              FAST("⚡", "fast_forward", "تسريع", "Fast Motion", "حتى 4×", "Up to 4×"),
+              ROTATE("🔃", "flip", "تدوير وقلب", "Flip & Rotate", "90°، 180°، قلب أفقي/عمودي", "90°, 180°, mirror"),
+              MUTE("🔇", "volume_off", "كتم الصوت", "Mute Video", "إزالة الصوت بالكامل", "Remove the audio"),
+              LOOP("🔁", "repeat", "تكرار الفيديو", "Video Looper", "كرّر المقطع حتى 10 مرات", "Repeat up to 10×"),
+              VOLUME("🔊", "volume_up", "مستوى الصوت", "Video Volume", "خفض أو رفع حتى 300%", "Lower or boost to 300%"),
+              INFO("ℹ️", "info", "معلومات الفيديو", "Video Info", "الدقة، الترميز، معدل البت…", "Resolution, codec, bitrate…");
 
               val title get() = tr(ar, en)
               val desc get() = tr(descAr, descEn)
@@ -995,8 +1044,6 @@ jobs:
           import androidx.media3.effect.SpeedChangeEffect
           import androidx.media3.transformer.EditedMediaItem
           import androidx.media3.transformer.Effects
-          import com.google.android.material.chip.Chip
-          import com.google.android.material.chip.ChipGroup
           import com.google.android.material.materialswitch.MaterialSwitch
           import com.google.android.material.slider.RangeSlider
           import com.google.android.material.slider.Slider
@@ -1107,18 +1154,24 @@ jobs:
                   val root = vbox(18).apply { layoutDirection = Lang.dir }
                   scroll.addView(root)
 
-                  // شريط علوي
-                  val top = hbox()
-                  val back = label(if (Lang.ar) "→" else "←", 26f, C.TEXT, true).apply {
-                      setPadding(dp(4), 0, dp(14), 0)
+                  // شريط علوي: سهم الرجوع + العنوان في الوسط
+                  val top = FrameLayout(this)
+                  top.addView(icon(Lang.backIcon, 28f, C.TEXT).apply {
+                      background = clickable(round(C.CARD2, 16f))
                       setOnClickListener { onBackPressedDispatcher.onBackPressed() }
-                  }
-                  top.addView(back)
+                  }, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER_VERTICAL or Gravity.START))
                   top.addView(vbox().apply {
-                      addView(label(tool.emoji + "  " + tool.title, 22f, C.TEXT, true))
-                      addView(label(tool.desc, 13f, C.SUB))
-                  })
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      addView(label(tool.title, 22f, C.TEXT, bold = true).apply { gravity = Gravity.CENTER })
+                      addView(label(tool.desc, 13f, C.SUB).apply { gravity = Gravity.CENTER })
+                  }, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
                   root.addView(top, lp(bottom = 18))
+
+                  // إطار البطاقة الكبيرة (مثل إطار الهاتف في المرجع)
+                  val panel = vbox(14).apply {
+                      background = round(Color.parseColor("#17181C"), 30f, 2, Color.parseColor("#34363C"))
+                  }
+                  root.addView(panel, lp())
 
                   // بطاقة الاختيار
                   pickCard = vbox(26).apply {
@@ -1126,52 +1179,60 @@ jobs:
                       background = clickable(GradientDrawable().apply {
                           setColor(C.CARD)
                           cornerRadius = dpf(22f)
-                          setStroke(dp(2), C.CYAN, dpf(10f), dpf(8f))
+                          setStroke(dp(2), C.CYAN, dpf(12f), dpf(8f))
                       })
                       isClickable = true
                       setOnClickListener { picker.launch("video/*") }
-                      addView(label("🎬", 46f).apply { gravity = Gravity.CENTER }, lp())
-                      addView(label(tr("اضغط لاختيار فيديو", "Tap to choose a video"), 18f, C.TEXT, true)
-                          .apply { gravity = Gravity.CENTER }, lp(top = 8))
-                      addView(label(tr("من المعرض أو الملفات", "From gallery or files"), 13f, C.SUB)
+                      addView(icon("add_circle", 56f, C.CYAN, filled = true), lp())
+                      addView(label(tr("اضغط لاختيار فيديو", "Tap to choose a video"), 19f, C.TEXT, bold = true)
+                          .apply { gravity = Gravity.CENTER }, lp(top = 10))
+                      addView(label(tr("من المعرض أو الملفات", "From gallery or files"), 14f, C.SUB)
                           .apply { gravity = Gravity.CENTER }, lp(top = 2))
                   }
-                  root.addView(pickCard, lp(h = dp(200)))
+                  panel.addView(pickCard, lp(h = dp(220)))
 
-                  // المعاينة
+                  // بطاقة الفيديو المصغّرة مع المعلومات فوقها
                   preview = FrameLayout(this).apply {
                       visibility = View.GONE
-                      background = round(C.CARD, 22f)
+                      background = round(C.CARD, 20f)
                       clipToOutline = true
                       outlineProvider = object : ViewOutlineProvider() {
                           override fun getOutline(view: View, outline: Outline) {
-                              outline.setRoundRect(0, 0, view.width, view.height, dpf(22f))
+                              outline.setRoundRect(0, 0, view.width, view.height, dpf(20f))
                           }
                       }
-                      setOnClickListener { if (!busy) picker.launch("video/*") }
                   }
                   thumb = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
                   preview.addView(thumb, FrameLayout.LayoutParams(-1, -1))
                   preview.addView(View(this).apply {
                       background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                          intArrayOf(Color.parseColor("#99000000"), Color.TRANSPARENT, Color.parseColor("#AA000000")))
+                          intArrayOf(Color.parseColor("#B3000000"), Color.TRANSPARENT, Color.parseColor("#B3000000")))
                   }, FrameLayout.LayoutParams(-1, -1))
-                  overlay = label("", 14f, C.TEXT, true).apply { setPadding(dp(14), dp(12), dp(14), 0) }
+                  overlay = label("", 15f, C.TEXT, bold = true).apply { setPadding(dp(16), dp(14), dp(16), 0) }
                   preview.addView(overlay, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
-                  nameView = label("", 14f, C.TEXT, true).apply {
-                      setPadding(dp(14), 0, dp(14), dp(12)); maxLines = 1
+                  nameView = label("", 15f, C.TEXT, bold = true).apply {
+                      setPadding(dp(16), 0, dp(70), dp(14)); maxLines = 1
                   }
                   preview.addView(nameView, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-                  preview.addView(label(tr("تغيير ↻", "Change ↻"), 12f, C.TEXT, true).apply {
-                      background = round(Color.parseColor("#66000000"), 12f)
-                      setPadding(dp(10), dp(5), dp(10), dp(5))
-                  }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
+                  // زر تشغيل أبيض في الوسط
+                  preview.addView(icon("play_arrow", 40f, Color.parseColor("#E5484D"), filled = true).apply {
+                      background = clickable(GradientDrawable().apply {
+                          shape = GradientDrawable.OVAL; setColor(Color.WHITE)
+                      })
+                      elevation = dpf(6f)
+                      setOnClickListener { info?.let { Media.open(this@ToolActivity, it.uri, "video/*") } }
+                  }, FrameLayout.LayoutParams(dp(66), dp(66), Gravity.CENTER))
+                  // زر تغيير الفيديو
+                  preview.addView(icon("swap_horiz", 22f, C.TEXT).apply {
+                      background = clickable(round(Color.parseColor("#80000000"), 14f))
+                      setOnClickListener { if (!busy) picker.launch("video/*") }
+                  }, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.BOTTOM or Gravity.END).apply {
                       setMargins(dp(10), dp(10), dp(10), dp(10))
                   })
-                  root.addView(preview, lp(h = dp(210)))
+                  panel.addView(preview, lp(h = dp(220)))
 
                   options = vbox()
-                  root.addView(options, lp(top = 6))
+                  panel.addView(options, lp(top = 4))
 
                   actionBtn = primaryButton(actionText()) { process() }
                   actionBtn.visibility = View.GONE
@@ -1207,37 +1268,58 @@ jobs:
               private fun progressText(p: Int) = tr("جارٍ المعالجة… ", "Processing… ") + "$p%" +
                       if (attempt > 1) tr("\n(محاولة $attempt بإعدادات أقوى)", "\n(attempt $attempt, stronger settings)") else ""
 
-              private fun section(text: String) = label(text, 16f, C.TEXT, true).also { options.addView(it, lp(top = 18, bottom = 8)) }
+              private fun section(text: String) = label(text, 18f, C.TEXT, bold = true).also { options.addView(it, lp(top = 18, bottom = 10)) }
 
-              private fun note(text: String) = label(text, 13f, C.SUB).also { options.addView(it, lp(top = 8)) }
-
-              private fun chips(labels: List<String>, selected: Int, onSelect: (Int) -> Unit): ChipGroup {
-                  val group = ChipGroup(this).apply {
-                      isSingleSelection = true
-                      isSelectionRequired = true
+              private fun note(text: String) {
+                  val row = hbox().apply {
+                      gravity = Gravity.TOP
+                      setPadding(dp(12), dp(10), dp(12), dp(10))
+                      background = round(Color.parseColor("#1A2C33"), 14f)
                   }
-                  val bg = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(C.CYAN, C.CARD2))
-                  val fg = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(C.DARK_TEXT, C.TEXT))
-                  val ids = labels.map { s ->
-                      val chip = Chip(this).apply {
-                          id = View.generateViewId()
-                          text = s
-                          isCheckable = true
-                          isCheckedIconVisible = false
-                          chipBackgroundColor = bg
-                          setTextColor(fg)
-                          chipStrokeWidth = 0f
+                  row.addView(icon("lightbulb", 20f, C.CYAN), lp(w = -2, end = 8))
+                  row.addView(label(text, 13f, C.SUB), lp(w = 0, weight = 1f))
+                  options.addView(row, lp(top = 10))
+              }
+
+              /** شبكة اختيارات بأزرار راديو (مثل شبكة الصيغ في المرجع) */
+              private fun chips(labels: List<String>, selected: Int, columns: Int = 0, onSelect: (Int) -> Unit) {
+                  val cols = if (columns > 0) columns else if (labels.size <= 2) 2 else 3
+                  val box = vbox(12).apply { background = round(C.CARD, 18f, 1, Color.parseColor("#2E4F57")) }
+                  val items = mutableListOf<Pair<TextView, TextView>>()
+                  var current = selected.coerceIn(0, labels.size - 1)
+                  fun restyle() {
+                      items.forEachIndexed { i, (ic, tx) ->
+                          val on = i == current
+                          ic.text = if (on) "radio_button_checked" else "radio_button_unchecked"
+                          ic.setTextColor(if (on) C.CYAN else C.MUTED)
+                          tx.setTextColor(if (on) C.CYAN else C.TEXT)
                       }
-                      group.addView(chip)
-                      chip.id
                   }
-                  group.check(ids[selected.coerceIn(0, ids.size - 1)])
-                  group.setOnCheckedStateChangeListener { _, checked ->
-                      val i = ids.indexOf(checked.firstOrNull() ?: -1)
-                      if (i >= 0) onSelect(i)
+                  labels.chunked(cols).forEachIndexed { r, rowLabels ->
+                      val row = hbox()
+                      rowLabels.forEachIndexed { c, s ->
+                          val index = r * cols + c
+                          val ic = icon("radio_button_unchecked", 22f, C.MUTED)
+                          val tx = label(s, 15f, C.TEXT, weight = 1).apply { maxLines = 2 }
+                          items += ic to tx
+                          row.addView(hbox().apply {
+                              setPadding(dp(4), dp(10), dp(4), dp(10))
+                              background = clickable(round(Color.TRANSPARENT, 12f))
+                              isClickable = true
+                              addView(ic, lp(w = -2, end = 8))
+                              addView(tx, lp(w = 0, weight = 1f))
+                              setOnClickListener {
+                                  current = index
+                                  restyle()
+                                  onSelect(index)
+                              }
+                          }, lp(w = 0, weight = 1f))
+                      }
+                      repeat(cols - rowLabels.size) { row.addView(View(this), lp(w = 0, h = 1, weight = 1f)) }
+                      box.addView(row, lp())
                   }
-                  options.addView(group, lp())
-                  return group
+                  restyle()
+                  options.addView(box, lp())
               }
 
               private fun slider(from: Float, to: Float, step: Float, value: Float, fmt: (Float) -> String,
@@ -1260,7 +1342,12 @@ jobs:
                   val sw = MaterialSwitch(this).apply {
                       this.text = text
                       textSize = 15f
+                      typeface = Fonts.medium
                       setTextColor(C.TEXT)
+                      thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                          intArrayOf(C.DARK_TEXT, C.SUB))
+                      trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                          intArrayOf(C.CYAN, C.CARD2))
                       isChecked = checked
                       setOnCheckedChangeListener { _, b -> onChange(b) }
                   }
@@ -1272,11 +1359,24 @@ jobs:
                   val dur = max(v.durationSec, 0.5f)
                   rangeStart = 0f
                   rangeEnd = if (maxSpan > 0f) min(dur, maxSpan) else dur
-                  val times = label("", 15f, C.CYAN, true).apply { gravity = Gravity.CENTER }
+                  // صناديق البداية والنهاية بحدود سماوية (مثل المرجع)
+                  val startBox = label("", 16f, C.TEXT, bold = true).apply { gravity = Gravity.CENTER }
+                  val endBox = label("", 16f, C.TEXT, bold = true).apply { gravity = Gravity.CENTER }
+                  val lenLabel = label("", 13f, C.SUB).apply { gravity = Gravity.CENTER }
+                  val times = vbox()
+                  val boxes = hbox()
+                  listOf(tr("البداية", "Start") to startBox, tr("النهاية", "End") to endBox).forEachIndexed { i, (name, tv) ->
+                      boxes.addView(label(name, 16f, C.TEXT, bold = true), lp(w = -2, start = if (i == 1) 12 else 0, end = 8))
+                      tv.background = round(Color.TRANSPARENT, 14f, 2, C.CYAN)
+                      tv.setPadding(dp(8), dp(10), dp(8), dp(10))
+                      boxes.addView(tv, lp(w = 0, weight = 1f))
+                  }
+                  times.addView(boxes, lp())
+                  times.addView(lenLabel, lp(top = 8))
                   fun refresh() {
-                      times.text = tr("البداية ", "Start ") + formatTime(rangeStart) + "     " +
-                              tr("النهاية ", "End ") + formatTime(rangeEnd) + "     " +
-                              tr("المدة ", "Length ") + formatTime(rangeEnd - rangeStart)
+                      startBox.text = formatTime(rangeStart)
+                      endBox.text = formatTime(rangeEnd)
+                      lenLabel.text = tr("المدة المختارة: ", "Selected length: ") + formatTime(rangeEnd - rangeStart)
                   }
                   val rs = RangeSlider(this).apply {
                       valueFrom = 0f
@@ -1296,15 +1396,25 @@ jobs:
                   refresh()
               }
 
+              private val presetIcons = mutableListOf<TextView>()
+
+              /** بطاقة خيار براديو وحدود سماوية عند التحديد */
               private fun optionCard(title: String, sub: String, index: Int): LinearLayout {
-                  val card = vbox(14).apply {
+                  val radio = icon("radio_button_unchecked", 24f, C.MUTED)
+                  presetIcons += radio
+                  val card = hbox().apply {
+                      setPadding(dp(16), dp(16), dp(16), dp(16))
                       isClickable = true
-                      addView(label(title, 16f, C.TEXT, true))
-                      addView(label(sub, 13f, C.SUB), lp(top = 2))
+                      addView(radio, lp(w = -2, end = 14))
+                      addView(vbox().apply {
+                          addView(label(title, 17f, C.TEXT, bold = true))
+                          addView(label(sub, 14f, C.SUB), lp(top = 3))
+                      }, lp(w = 0, weight = 1f))
                       setOnClickListener {
                           preset = index
                           stylePresetCards()
                       }
+                      pressScale(0.98f)
                   }
                   presetCards += card
                   options.addView(card, lp(bottom = 10))
@@ -1313,7 +1423,13 @@ jobs:
 
               private fun stylePresetCards() {
                   presetCards.forEachIndexed { i, c ->
-                      c.background = clickable(if (i == preset) round(C.CARD, 16f, 2, C.CYAN) else round(C.CARD, 16f))
+                      val on = i == preset
+                      c.background = clickable(if (on) round(Color.parseColor("#1F2A30"), 18f, 2, C.CYAN) else round(C.CARD, 18f))
+                      c.elevation = if (on) dpf(6f) else 0f
+                      presetIcons.getOrNull(i)?.let {
+                          it.text = if (on) "radio_button_checked" else "radio_button_unchecked"
+                          it.setTextColor(if (on) C.CYAN else C.MUTED)
+                      }
                   }
               }
 
@@ -1349,6 +1465,7 @@ jobs:
               private fun buildOptions(v: VInfo) {
                   options.removeAllViews()
                   presetCards.clear()
+                  presetIcons.clear()
                   actionBtn.visibility = View.VISIBLE
                   actionBtn.text = actionText()
                   when (tool) {
@@ -1394,7 +1511,7 @@ jobs:
                               "Output is MP4. AVI/MKV/FLV need FFmpeg, which this version doesn't include."))
                       }
                       Tool.AUDIO -> {
-                          if (!v.hasAudio) note(tr("⚠️ هذا الفيديو لا يحتوي على صوت.", "⚠️ This video has no audio track."))
+                          if (!v.hasAudio) note(tr("هذا الفيديو لا يحتوي على صوت.", "This video has no audio track."))
                           section(tr("جودة الصوت", "Bitrate"))
                           val rates = listOf(64, 96, 128, 192, 256)
                           chips(rates.map { "${it}kb/s" }, rates.indexOf(audioKbps)) { audioKbps = rates[it] }
@@ -1461,7 +1578,7 @@ jobs:
                           refresh()
                       }
                       Tool.VOLUME -> {
-                          if (!v.hasAudio) note(tr("⚠️ هذا الفيديو لا يحتوي على صوت.", "⚠️ This video has no audio track."))
+                          if (!v.hasAudio) note(tr("هذا الفيديو لا يحتوي على صوت.", "This video has no audio track."))
                           section(tr("مستوى الصوت", "Volume"))
                           val l = label("", 15f, C.CYAN, true)
                           fun refresh() { l.text = "$volume%" }
@@ -1729,7 +1846,7 @@ jobs:
 
               private fun fail(msg: String) {
                   setBusy(false)
-                  status.text = "❌ " + tr("تعذّرت المعالجة:\n", "Failed:\n") + msg
+                  status.text = tr("تعذّرت المعالجة:\n", "Failed:\n") + msg
               }
 
               // ---- GIF
@@ -1814,7 +1931,10 @@ jobs:
                   val v = info
                   result.removeAllViews()
                   result.visibility = View.VISIBLE
-                  result.addView(label("✅ " + tr("تم بنجاح!", "Done!"), 20f, C.TEXT, true))
+                  val head = hbox()
+                  head.addView(icon("check_circle", 30f, Color.parseColor("#34D399"), filled = true), lp(w = -2, end = 8))
+                  head.addView(label(tr("تم بنجاح!", "Done!"), 21f, C.TEXT, bold = true))
+                  result.addView(head, lp())
                   if (v != null && v.size > 0) {
                       val pct = ((v.size - outSize) * 100 / v.size).toInt()
                       val change = if (pct > 0) tr("أصغر بنسبة $pct%", "$pct% smaller")
@@ -1831,10 +1951,10 @@ jobs:
                   }
                   result.addView(label(tr("حُفظ في: ", "Saved to: ") + where, 13f, C.SUB), lp(top = 4))
                   val row = hbox()
-                  row.addView(secondaryButton(tr("📤 مشاركة", "📤 Share"), Color.parseColor("#2563EB")) {
+                  row.addView(secondaryButton(tr("مشاركة", "Share"), "share", Color.parseColor("#2563EB")) {
                       Media.share(this, uri, kind.mime)
                   }, lp(w = 0, weight = 1f, end = 6))
-                  row.addView(secondaryButton(tr("▶ فتح", "▶ Open")) { Media.open(this, uri, kind.mime) },
+                  row.addView(secondaryButton(tr("فتح", "Open"), "play_arrow") { Media.open(this, uri, kind.mime) },
                       lp(w = 0, weight = 1f, start = 6))
                   result.addView(row, lp(top = 14))
               }
@@ -1842,9 +1962,12 @@ jobs:
               private fun showResultOriginal(v: VInfo, message: String) {
                   result.removeAllViews()
                   result.visibility = View.VISIBLE
-                  result.addView(label("ℹ️ " + message, 15f, C.TEXT))
-                  result.addView(secondaryButton(tr("📤 إرسال الأصلي (", "📤 Send original (") + formatSize(v.size) + ")",
-                      Color.parseColor("#2563EB")) { Media.share(this, v.uri, "video/*") }, lp(top = 12))
+                  val head = hbox().apply { gravity = Gravity.TOP }
+                  head.addView(icon("info", 24f, C.CYAN), lp(w = -2, end = 8))
+                  head.addView(label(message, 15f, C.TEXT), lp(w = 0, weight = 1f))
+                  result.addView(head, lp())
+                  result.addView(secondaryButton(tr("إرسال الأصلي (", "Send original (") + formatSize(v.size) + ")",
+                      "share", Color.parseColor("#2563EB")) { Media.share(this, v.uri, "video/*") }, lp(top = 12))
               }
           }
           EOF_VC
@@ -1852,31 +1975,65 @@ jobs:
           cat > app/src/main/java/com/omar/videotoolkit/Ui.kt <<'EOF_VC'
           package com.omar.videotoolkit
 
+          import android.annotation.SuppressLint
           import android.content.Context
           import android.content.res.ColorStateList
           import android.graphics.Color
           import android.graphics.Typeface
           import android.graphics.drawable.GradientDrawable
+          import android.graphics.drawable.LayerDrawable
           import android.graphics.drawable.RippleDrawable
+          import android.os.Build
+          import android.util.TypedValue
           import android.view.Gravity
+          import android.view.MotionEvent
           import android.view.View
           import android.view.ViewGroup
           import android.widget.LinearLayout
           import android.widget.TextView
           import kotlin.math.roundToInt
 
-          /** ألوان الواجهة الداكنة */
+          /**
+           * نظام التصميم — مستخرج من صور التطبيق المرجعي (عبر DeepSeek)
+           * مع أسماء أيقونات Material Symbols المقترحة من ChatGPT وDeepSeek.
+           */
           object C {
-              val BG = Color.parseColor("#111217")
-              val CARD = Color.parseColor("#1E2027")
-              val CARD2 = Color.parseColor("#2A2D36")
-              val CYAN = Color.parseColor("#22D3EE")
-              val PURPLE = Color.parseColor("#A855F7")
+              val BG = Color.parseColor("#1B1C20")
+              val SURFACE = Color.parseColor("#232429")
+              val CARD = Color.parseColor("#26282E")
+              val CARD2 = Color.parseColor("#2D3036")
+              val PILL = Color.parseColor("#3A3B41")
+              val STROKE = Color.parseColor("#3A3D42")
+              val CYAN = Color.parseColor("#1ED7F4")
+              val BLUE = Color.parseColor("#2F80ED")
+              val PURPLE = Color.parseColor("#8B5CF6")
               val PINK = Color.parseColor("#EC4899")
               val ORANGE = Color.parseColor("#F59E0B")
               val TEXT = Color.WHITE
-              val SUB = Color.parseColor("#9CA3AF")
-              val DARK_TEXT = Color.parseColor("#04121A")
+              val SUB = Color.parseColor("#9EA2A8")
+              val MUTED = Color.parseColor("#6E7278")
+              val DARK_TEXT = Color.parseColor("#06161B")
+          }
+
+          /** خطوط Tajawal + أيقونات Material Symbols Rounded (من مجلد assets/fonts) */
+          object Fonts {
+              var regular: Typeface = Typeface.DEFAULT
+              var medium: Typeface = Typeface.DEFAULT
+              var bold: Typeface = Typeface.DEFAULT_BOLD
+              var symbols: Typeface = Typeface.DEFAULT
+              private var loaded = false
+
+              fun init(ctx: Context) {
+                  if (loaded) return
+                  val a = ctx.applicationContext.assets
+                  fun load(name: String, fallback: Typeface) =
+                      try { Typeface.createFromAsset(a, "fonts/$name") } catch (_: Exception) { fallback }
+                  regular = load("Tajawal-Regular.ttf", Typeface.DEFAULT)
+                  medium = load("Tajawal-Medium.ttf", regular)
+                  bold = load("Tajawal-Bold.ttf", Typeface.DEFAULT_BOLD)
+                  symbols = load("MaterialSymbolsRounded.ttf", Typeface.DEFAULT)
+                  loaded = true
+              }
           }
 
           /** اللغة: عربية افتراضياً */
@@ -1884,6 +2041,7 @@ jobs:
               var ar = true
               fun load(ctx: Context) {
                   ar = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE).getString("lang", "ar") == "ar"
+                  Fonts.init(ctx)
               }
               fun set(ctx: Context, arabic: Boolean) {
                   ar = arabic
@@ -1891,6 +2049,9 @@ jobs:
                       .putString("lang", if (arabic) "ar" else "en").apply()
               }
               val dir get() = if (ar) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
+              /** سهم الرجوع/التقدم حسب اتجاه اللغة */
+              val backIcon get() = if (ar) "arrow_forward" else "arrow_back"
+              val nextIcon get() = if (ar) "chevron_left" else "chevron_right"
           }
 
           fun tr(ar: String, en: String) = if (Lang.ar) ar else en
@@ -1909,40 +2070,95 @@ jobs:
                                orientation: GradientDrawable.Orientation = GradientDrawable.Orientation.TL_BR) =
               GradientDrawable(orientation, colors).apply { cornerRadius = dpf(radiusDp) }
 
-          /** خلفية قابلة للضغط مع تأثير الموجة */
-          fun Context.clickable(bg: GradientDrawable) =
-              RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33FFFFFF")), bg, null)
-
-          fun Context.label(text: String, sizeSp: Float = 15f, color: Int = C.TEXT, bold: Boolean = false) =
-              TextView(this).apply {
-                  this.text = text
-                  textSize = sizeSp
-                  setTextColor(color)
-                  if (bold) typeface = Typeface.DEFAULT_BOLD
-              }
-
-          fun Context.primaryButton(text: String, onClick: () -> Unit) = TextView(this).apply {
-              this.text = text
-              textSize = 19f
-              typeface = Typeface.DEFAULT_BOLD
-              setTextColor(C.DARK_TEXT)
-              gravity = Gravity.CENTER
-              setPadding(dp(16), dp(16), dp(16), dp(16))
-              background = clickable(round(C.CYAN, 18f))
-              isClickable = true
-              setOnClickListener { onClick() }
+          fun Context.oval(colors: IntArray) = GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
+              shape = GradientDrawable.OVAL
           }
 
-          fun Context.secondaryButton(text: String, color: Int = C.CARD2, onClick: () -> Unit) = TextView(this).apply {
-              this.text = text
-              textSize = 15f
-              typeface = Typeface.DEFAULT_BOLD
-              setTextColor(C.TEXT)
+          /** حدود متدرجة الألوان (مثل البطاقة المميزة في التطبيق المرجعي) */
+          fun Context.gradientBorder(colors: IntArray, fill: Int, radiusDp: Float, borderDp: Int): LayerDrawable {
+              val outer = gradient(colors, radiusDp, GradientDrawable.Orientation.LEFT_RIGHT)
+              val inner = round(fill, radiusDp - 1)
+              return LayerDrawable(arrayOf(outer, inner)).apply {
+                  val b = dp(borderDp)
+                  setLayerInset(1, b, b, b, b)
+              }
+          }
+
+          /** خلفية مع تأثير الموجة */
+          fun Context.clickable(bg: android.graphics.drawable.Drawable) =
+              RippleDrawable(ColorStateList.valueOf(Color.parseColor("#22FFFFFF")), bg, null)
+
+          /** تصغير بسيط عند اللمس */
+          @SuppressLint("ClickableViewAccessibility")
+          fun View.pressScale(scale: Float = 0.96f) {
+              setOnTouchListener { v, e ->
+                  when (e.actionMasked) {
+                      MotionEvent.ACTION_DOWN -> v.animate().scaleX(scale).scaleY(scale).setDuration(90).start()
+                      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                          v.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+                  }
+                  false
+              }
+          }
+
+          /** نص بخط Tajawal. weight: 0 عادي، 1 متوسط، 2 عريض */
+          fun Context.label(text: String, sizeSp: Float = 15f, color: Int = C.TEXT, bold: Boolean = false, weight: Int = -1) =
+              TextView(this).apply {
+                  this.text = text
+                  setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                  setTextColor(color)
+                  typeface = when (if (weight >= 0) weight else if (bold) 2 else 0) {
+                      2 -> Fonts.bold
+                      1 -> Fonts.medium
+                      else -> Fonts.regular
+                  }
+                  includeFontPadding = true
+              }
+
+          /** أيقونة من خط Material Symbols Rounded */
+          fun Context.icon(name: String, sizeSp: Float = 24f, color: Int = C.TEXT, filled: Boolean = false) =
+              TextView(this).apply {
+                  text = name
+                  typeface = Fonts.symbols
+                  setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+                  setTextColor(color)
+                  gravity = Gravity.CENTER
+                  includeFontPadding = false
+                  textDirection = View.TEXT_DIRECTION_LTR
+                  isSingleLine = true
+                  if (Build.VERSION.SDK_INT >= 26) {
+                      setFontVariationSettings("'FILL' ${if (filled) 1 else 0}, 'wght' 400, 'GRAD' 0, 'opsz' 24")
+                  }
+              }
+
+          /** زر سماوي عريض بشكل حبة دواء مع سهم (مثل زر Compress في المرجع) */
+          fun Context.primaryButton(text: String, onClick: () -> Unit) = LinearLayout(this).apply {
+              orientation = LinearLayout.HORIZONTAL
+              gravity = Gravity.CENTER
+              setPadding(dp(24), 0, dp(18), 0)
+              background = clickable(round(C.CYAN, 30f))
+              isClickable = true
+              elevation = dpf(6f)
+              minimumHeight = dp(60)
+              addView(View(this@primaryButton), lp(w = dp(24), h = 1))
+              addView(label(text, 21f, C.DARK_TEXT, bold = true).apply { gravity = Gravity.CENTER },
+                  lp(w = 0, weight = 1f))
+              addView(icon(Lang.nextIcon, 28f, C.DARK_TEXT), lp(w = dp(24), h = -2))
+              setOnClickListener { onClick() }
+              pressScale(0.97f)
+          }
+
+          fun Context.secondaryButton(text: String, iconName: String? = null, color: Int = C.CARD2,
+                                      onClick: () -> Unit) = LinearLayout(this).apply {
+              orientation = LinearLayout.HORIZONTAL
               gravity = Gravity.CENTER
               setPadding(dp(12), dp(13), dp(12), dp(13))
-              background = clickable(round(color, 14f))
+              background = clickable(round(color, 26f))
               isClickable = true
+              if (iconName != null) addView(icon(iconName, 20f, C.TEXT), lp(w = -2, end = 6))
+              if (text.isNotEmpty()) addView(label(text, 15f, C.TEXT, weight = 1))
               setOnClickListener { onClick() }
+              pressScale()
           }
 
           fun Context.lp(w: Int = ViewGroup.LayoutParams.MATCH_PARENT, h: Int = ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1972,9 +2188,8 @@ jobs:
 
           fun formatTime(sec: Float): String {
               val s = sec.toInt().coerceAtLeast(0)
-              val tenth = ((sec - s) * 10).toInt().coerceIn(0, 9)
               return if (s >= 3600) String.format(java.util.Locale.US, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
-              else String.format(java.util.Locale.US, "%02d:%02d.%d", s / 60, s % 60, tenth)
+              else String.format(java.util.Locale.US, "%02d:%02d", s / 60, s % 60)
           }
           EOF_VC
           mkdir -p app/src/main/res/drawable
@@ -2007,13 +2222,13 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <style name="AppTheme" parent="Theme.Material3.Dark.NoActionBar">
-                  <item name="colorPrimary">#22D3EE</item>
+                  <item name="colorPrimary">#1ED7F4</item>
                   <item name="colorOnPrimary">#04121A</item>
                   <item name="colorSecondary">#A855F7</item>
-                  <item name="colorSurface">#1E2027</item>
-                  <item name="android:windowBackground">#111217</item>
-                  <item name="android:statusBarColor">#111217</item>
-                  <item name="android:navigationBarColor">#16181D</item>
+                  <item name="colorSurface">#26282E</item>
+                  <item name="android:windowBackground">#1B1C20</item>
+                  <item name="android:statusBarColor">#1B1C20</item>
+                  <item name="android:navigationBarColor">#232429</item>
               </style>
           </resources>
           EOF_VC
@@ -2055,6 +2270,22 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+
+      - name: Fixed signing key (allows updates without uninstall)
+        working-directory: .
+        run: |
+          mkdir -p ~/.android
+          echo "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" | base64 -d > ~/.android/debug.keystore
+
+      - name: Download fonts (Tajawal + Material Symbols Rounded)
+        run: |
+          mkdir -p app/src/main/assets/fonts
+          cd app/src/main/assets/fonts
+          for w in Regular Medium Bold; do
+            curl -fsSL -o Tajawal-$w.ttf "https://github.com/google/fonts/raw/main/ofl/tajawal/Tajawal-$w.ttf"
+          done
+          curl -fsSL -o MaterialSymbolsRounded.ttf "https://github.com/google/material-design-icons/raw/master/variablefont/MaterialSymbolsRounded%5BFILL,GRAD,opsz,wght%5D.ttf"
+          ls -la
 
       - name: Build APK
         run: |
